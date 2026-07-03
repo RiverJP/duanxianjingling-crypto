@@ -8,7 +8,17 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
     <div>
       <div className="space-y-3 md:hidden">
         {assets.map((asset) => (
-          <Link key={asset.symbol} href={`/asset/${asset.symbol.toLowerCase()}`} className="block rounded border border-ink/10 bg-white p-4 hover:border-mint/40">
+          <Link key={asset.symbol} href={`/asset/${asset.symbol.toLowerCase()}`} className="block overflow-hidden rounded border border-ink/10 bg-white hover:border-mint/40">
+            <div className={`flex items-center justify-between gap-2 px-4 py-3 ${mobileStatusClass(asset.opportunity_status)}`}>
+              <span className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold">
+                <Target size={16} className="shrink-0" />
+                <span className="truncate">{asset.opportunity_status}</span>
+              </span>
+              <span className="shrink-0 rounded bg-white/70 px-2 py-1 text-xs font-semibold tabular-nums text-ink">
+                {asset.opportunity_score}/100
+              </span>
+            </div>
+            <div className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 {asset.image_url ? <img src={asset.image_url} alt="" className="h-8 w-8 shrink-0 rounded-full" /> : null}
@@ -28,16 +38,16 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
               <MobileStat label="成交量" value={formatCompactCurrency(asset.volume_24h)} />
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <span className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium ${statusClass(asset.opportunity_status)}`}>
-                <Target size={13} />
-                {asset.opportunity_status}
-              </span>
               <span className="rounded bg-panel px-2 py-1 text-xs text-ink/60">
                 触发 {asset.trigger_price ? formatCurrency(asset.trigger_price) : "等待"}
               </span>
               <span className="rounded bg-panel px-2 py-1 text-xs text-ink/60">
+                止盈 {asset.take_profit ? formatCurrency(asset.take_profit) : "暂无"}
+              </span>
+              <span className="rounded bg-panel px-2 py-1 text-xs text-ink/60">
                 止损 {asset.stop_loss ? formatCurrency(asset.stop_loss) : "暂无"}
               </span>
+            </div>
             </div>
           </Link>
         ))}
@@ -146,6 +156,19 @@ function statusClass(status: string): string {
     return "bg-ink/10 text-ink/65";
   }
   return "bg-panel text-ink/55";
+}
+
+function mobileStatusClass(status: string): string {
+  if (status === "高优先级") {
+    return "bg-gold/35 text-ink";
+  }
+  if (status === "可关注") {
+    return "bg-mint/20 text-mint";
+  }
+  if (status === "等待触发") {
+    return "bg-ink/10 text-ink/70";
+  }
+  return "bg-panel text-ink/60";
 }
 
 function signalClass(signal: string): string {
