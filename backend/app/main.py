@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,14 +10,20 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import AssetSnapshot, PaperTrade
-from app.paper_trading import apply_paper_trading, build_equity_curve, build_paper_trading_summary
+from app.paper_trading import apply_paper_trading, build_equity_curve, build_paper_trading_summary, record_daily_snapshot
 from app.schemas import AssetOut, EquityCurvePointOut, OhlcCandleOut, PaperTradeOut, PaperTradingSummaryOut, RefreshOut
-from app.services import fetch_ohlc_data, refresh_assets
+from app.services import (
+    fetch_ohlc_data,
+    refresh_assets,
+    refresh_candidate_assets,
+    refresh_open_trade_assets,
+    refresh_technical_indicators,
+)
 from app.technicals import calculate_technicals
 
 settings = get_settings()
 app = FastAPI(title="短线精灵 API", version="0.1.0")
-auto_refresh_task: asyncio.Task | None = None
+auto_refresh_tasks: list[asyncio.Task] = []
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,33 +43,86 @@ async def on_startup() -> None:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
-    if auto_refresh_task:
-        auto_refresh_task.cancel()
+    for task in auto_refresh_tasks:
+        task.cancel()
+    for task in auto_refresh_tasks:
         with suppress(asyncio.CancelledError):
-            await auto_refresh_task
+            await task
 
 
 def start_auto_refresh() -> None:
-    global auto_refresh_task
     if not settings.auto_refresh_enabled:
         return
-    if auto_refresh_task is None or auto_refresh_task.done():
-        auto_refresh_task = asyncio.create_task(auto_refresh_loop())
+    if auto_refresh_tasks:
+        return
+    auto_refresh_tasks.extend(
+        [
+            asyncio.create_task(periodic_job("market-scan", settings.market_scan_interval_minutes, run_market_scan)),
+            asyncio.create_task(periodic_job("candidate-scan", settings.candidate_scan_interval_minutes, run_candidate_scan)),
+            asyncio.create_task(periodic_job("paper-positions", settings.paper_position_interval_minutes, run_paper_position_refresh)),
+            asyncio.create_task(periodic_job("technical-refresh", settings.technical_refresh_interval_minutes, run_technical_refresh)),
+            asyncio.create_task(daily_snapshot_loop()),
+        ]
+    )
 
 
-async def auto_refresh_loop() -> None:
-    interval_seconds = max(1, settings.auto_refresh_interval_minutes) * 60
+async def periodic_job(name: str, interval_minutes: int, runner) -> None:
+    interval_seconds = max(1, interval_minutes) * 60
     while True:
         await asyncio.sleep(interval_seconds)
         db = SessionLocal()
         try:
-            refreshed = await refresh_assets(db)
-            apply_paper_trading(db, refreshed)
+            count = await runner(db)
+            print(f"{name} refreshed {count} items")
         except Exception as exc:
-            print(f"auto refresh failed: {exc}")
+            print(f"{name} failed: {exc}")
             db.rollback()
         finally:
             db.close()
+
+
+async def daily_snapshot_loop() -> None:
+    while True:
+        now = datetime.now(timezone.utc)
+        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        await asyncio.sleep(max(1, int((next_midnight - now).total_seconds())))
+        db = SessionLocal()
+        try:
+            snapshot = record_daily_snapshot(db, snapshot_date=next_midnight.date().isoformat())
+            print(f"daily snapshot recorded: {snapshot.snapshot_date}")
+        except Exception as exc:
+            print(f"daily snapshot failed: {exc}")
+            db.rollback()
+        finally:
+            db.close()
+
+
+async def run_market_scan(db: Session) -> int:
+    refreshed = await refresh_assets(db)
+    apply_paper_trading(db, refreshed, open_new=True)
+    return len(refreshed)
+
+
+async def run_candidate_scan(db: Session) -> int:
+    refreshed = await refresh_candidate_assets(db)
+    apply_paper_trading(db, refreshed, open_new=True)
+    return len(refreshed)
+
+
+async def run_paper_position_refresh(db: Session) -> int:
+    refreshed = await refresh_open_trade_assets(db)
+    apply_paper_trading(db, refreshed, open_new=False)
+    return len(refreshed)
+
+
+async def run_technical_refresh(db: Session) -> int:
+    refreshed = await refresh_technical_indicators(db)
+    return len(refreshed)
+
+
+def verify_refresh_token(x_refresh_token: str | None) -> None:
+    if settings.refresh_token and x_refresh_token != settings.refresh_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
 
 def ensure_trade_plan_columns() -> None:
@@ -111,6 +171,23 @@ def ensure_trade_plan_columns() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/scheduler/status")
+def scheduler_status() -> dict:
+    return {
+        "enabled": settings.auto_refresh_enabled,
+        "tasks": {
+            "market_scan_minutes": settings.market_scan_interval_minutes,
+            "candidate_scan_minutes": settings.candidate_scan_interval_minutes,
+            "paper_position_minutes": settings.paper_position_interval_minutes,
+            "technical_refresh_minutes": settings.technical_refresh_interval_minutes,
+            "daily_snapshot": "00:00 UTC",
+        },
+        "candidate_min_opportunity_score": settings.candidate_min_opportunity_score,
+        "paper_min_opportunity_score": settings.paper_min_opportunity_score,
+        "technical_refresh_limit": settings.technical_refresh_limit,
+    }
 
 
 @app.get("/assets", response_model=list[AssetOut])
@@ -162,11 +239,9 @@ async def refresh(
     db: Session = Depends(get_db),
     x_refresh_token: str | None = Header(default=None),
 ) -> RefreshOut:
-    if settings.refresh_token and x_refresh_token != settings.refresh_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-
+    verify_refresh_token(x_refresh_token)
     refreshed = await refresh_assets(db)
-    apply_paper_trading(db, refreshed)
+    apply_paper_trading(db, refreshed, open_new=True)
     return RefreshOut(refreshed=[asset.symbol for asset in refreshed], count=len(refreshed))
 
 
@@ -176,6 +251,64 @@ async def scheduler_refresh(
     x_refresh_token: str | None = Header(default=None),
 ) -> RefreshOut:
     return await refresh(db=db, x_refresh_token=x_refresh_token)
+
+
+@app.post("/scheduler/market-scan", response_model=RefreshOut)
+async def scheduler_market_scan(
+    db: Session = Depends(get_db),
+    x_refresh_token: str | None = Header(default=None),
+) -> RefreshOut:
+    verify_refresh_token(x_refresh_token)
+    refreshed = await refresh_assets(db)
+    apply_paper_trading(db, refreshed, open_new=True)
+    return RefreshOut(refreshed=[asset.symbol for asset in refreshed], count=len(refreshed))
+
+
+@app.post("/scheduler/candidate-scan", response_model=RefreshOut)
+async def scheduler_candidate_scan(
+    db: Session = Depends(get_db),
+    x_refresh_token: str | None = Header(default=None),
+) -> RefreshOut:
+    verify_refresh_token(x_refresh_token)
+    refreshed = await refresh_candidate_assets(db)
+    apply_paper_trading(db, refreshed, open_new=True)
+    return RefreshOut(refreshed=[asset.symbol for asset in refreshed], count=len(refreshed))
+
+
+@app.post("/scheduler/paper-positions", response_model=RefreshOut)
+async def scheduler_paper_positions(
+    db: Session = Depends(get_db),
+    x_refresh_token: str | None = Header(default=None),
+) -> RefreshOut:
+    verify_refresh_token(x_refresh_token)
+    refreshed = await refresh_open_trade_assets(db)
+    apply_paper_trading(db, refreshed, open_new=False)
+    return RefreshOut(refreshed=[asset.symbol for asset in refreshed], count=len(refreshed))
+
+
+@app.post("/scheduler/technical-refresh", response_model=RefreshOut)
+async def scheduler_technical_refresh(
+    db: Session = Depends(get_db),
+    x_refresh_token: str | None = Header(default=None),
+) -> RefreshOut:
+    verify_refresh_token(x_refresh_token)
+    refreshed = await refresh_technical_indicators(db)
+    return RefreshOut(refreshed=[asset.symbol for asset in refreshed], count=len(refreshed))
+
+
+@app.post("/scheduler/daily-snapshot")
+def scheduler_daily_snapshot(
+    db: Session = Depends(get_db),
+    x_refresh_token: str | None = Header(default=None),
+) -> dict[str, str | float | int]:
+    verify_refresh_token(x_refresh_token)
+    snapshot = record_daily_snapshot(db)
+    return {
+        "date": snapshot.snapshot_date,
+        "equity": snapshot.equity,
+        "total_pnl": snapshot.total_pnl,
+        "open_trades": snapshot.open_trades,
+    }
 
 
 @app.get("/paper-trading/summary", response_model=PaperTradingSummaryOut)

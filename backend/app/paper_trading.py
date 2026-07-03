@@ -4,12 +4,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import AssetSnapshot, PaperTrade
+from app.models import AssetSnapshot, PaperDailySnapshot, PaperTrade
 
 
-def apply_paper_trading(db: Session, assets: list[AssetSnapshot]) -> None:
+def apply_paper_trading(db: Session, assets: list[AssetSnapshot], open_new: bool = True) -> None:
     update_open_trades(db, assets)
-    open_new_trades(db, assets)
+    if open_new:
+        open_new_trades(db, assets)
     db.commit()
 
 
@@ -161,6 +162,28 @@ def build_equity_curve(db: Session, days: int = 30) -> list[dict[str, float | st
             }
         )
     return points
+
+
+def record_daily_snapshot(db: Session, snapshot_date: str | None = None) -> PaperDailySnapshot:
+    now = datetime.now(timezone.utc)
+    target_date = snapshot_date or now.date().isoformat()
+    summary = build_paper_trading_summary(db)
+    snapshot = db.scalar(select(PaperDailySnapshot).where(PaperDailySnapshot.snapshot_date == target_date))
+    if snapshot is None:
+        snapshot = PaperDailySnapshot(snapshot_date=target_date)
+        db.add(snapshot)
+
+    snapshot.account_balance = summary["account_balance"]
+    snapshot.equity = round(summary["account_balance"] + summary["total_pnl"], 2)
+    snapshot.total_pnl = summary["total_pnl"]
+    snapshot.realized_pnl = summary["realized_pnl"]
+    snapshot.unrealized_pnl = summary["unrealized_pnl"]
+    snapshot.open_trades = summary["open_trades"]
+    snapshot.closed_trades = summary["closed_trades"]
+    snapshot.win_rate = summary["win_rate"]
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
 
 
 def period_pnl(trades: list[PaperTrade], start: datetime) -> float:

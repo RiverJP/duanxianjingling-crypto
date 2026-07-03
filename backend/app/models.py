@@ -81,3 +81,19 @@ class PaperTrade(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
+class PaperDailySnapshot(Base):
+    __tablename__ = "paper_daily_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    snapshot_date: Mapped[str] = mapped_column(String(10), unique=True, index=True)
+    account_balance: Mapped[float] = mapped_column(Float, default=10000)
+    equity: Mapped[float] = mapped_column(Float, default=10000)
+    total_pnl: Mapped[float] = mapped_column(Float, default=0)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0)
+    unrealized_pnl: Mapped[float] = mapped_column(Float, default=0)
+    open_trades: Mapped[int] = mapped_column(Integer, default=0)
+    closed_trades: Mapped[int] = mapped_column(Integer, default=0)
+    win_rate: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

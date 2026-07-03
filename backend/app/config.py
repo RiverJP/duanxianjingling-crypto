@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     core_technical_symbols: str = "BTC,ETH"
     auto_refresh_enabled: bool = True
     auto_refresh_interval_minutes: int = 30
+    market_scan_interval_minutes: int = 30
+    candidate_scan_interval_minutes: int = 5
+    paper_position_interval_minutes: int = 5
+    technical_refresh_interval_minutes: int = 30
+    candidate_min_opportunity_score: int = 75
+    technical_refresh_limit: int = 30
     paper_account_balance: float = 10000
     paper_margin_per_trade: float = 500
     paper_leverage: int = 5

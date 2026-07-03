@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { Header } from "@/components/Header";
 import { MetricCard } from "@/components/MetricCard";
+import { RefreshCadence } from "@/components/RefreshCadence";
 import { WatchlistTable } from "@/components/WatchlistTable";
-import { getAssets, getPaperTrades, getPaperTradingSummary } from "@/lib/api";
+import { getAssets, getPaperTrades, getPaperTradingSummary, getSchedulerStatus } from "@/lib/api";
 import { formatCompactCurrency, formatCurrency } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [assets, paperSummary, paperTrades] = await Promise.all([getAssets(), getPaperTradingSummary(), getPaperTrades()]);
+  const [assets, paperSummary, paperTrades, schedulerStatus] = await Promise.all([getAssets(), getPaperTradingSummary(), getPaperTrades(), getSchedulerStatus()]);
   const openTrades = paperTrades.filter((trade) => trade.status === "open");
   const leader = assets.reduce<typeof assets[number] | null>((best, asset) => {
     if (!best) {
@@ -21,7 +22,8 @@ export default async function DashboardPage() {
   const floatingPnlPercent = paperSummary.used_margin > 0 ? (paperSummary.unrealized_pnl / paperSummary.used_margin) * 100 : 0;
   const availableMargin = paperSummary.account_balance + paperSummary.total_pnl - paperSummary.used_margin;
   const marginUsagePercent = paperSummary.account_balance > 0 ? (paperSummary.used_margin / paperSummary.account_balance) * 100 : 0;
-  const positionRatio = paperSummary.account_balance > 0 ? (paperSummary.open_notional / paperSummary.account_balance) * 100 : 0;
+  const notionalExposureRatio = paperSummary.account_balance > 0 ? (paperSummary.open_notional / paperSummary.account_balance) * 100 : 0;
+  const perTradeNotional = paperSummary.margin_per_trade * paperSummary.leverage;
 
   return (
     <>
@@ -45,25 +47,27 @@ export default async function DashboardPage() {
                 {formatCurrency(paperSummary.unrealized_pnl)}
               </p>
               <p className={`mt-2 text-lg font-semibold tabular-nums ${paperSummary.unrealized_pnl >= 0 ? "text-mint" : "text-coral"}`}>
-                {floatingPnlPercent >= 0 ? "+" : ""}{floatingPnlPercent.toFixed(2)}% / 已用保证金
+                {floatingPnlPercent >= 0 ? "+" : ""}{floatingPnlPercent.toFixed(2)}% / 按已用保证金计算
               </p>
               <p className="mt-3 text-sm leading-6 text-ink/65">
-                规则：机会分 &gt;= {paperSummary.min_opportunity_score} 且方向为做多/做空时自动进入模拟开单；每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆，名义仓位 {formatCurrency(paperSummary.margin_per_trade * paperSummary.leverage)}。
+                规则：机会分 &gt;= {paperSummary.min_opportunity_score} 且方向为做多/做空时自动进入模拟开单；每单占用保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆，对应名义仓位 {formatCurrency(perTradeNotional)}。
               </p>
             </div>
-            <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-              <HomePnlStat label="总资金" value={formatCurrency(paperSummary.account_balance)} />
-              <HomePnlStat label="持仓" value={`${paperSummary.open_trades} 笔`} />
-              <HomePnlStat label="总仓位" value={formatCurrency(paperSummary.open_notional)} />
-              <HomePnlStat label="仓位占本金" value={`${positionRatio.toFixed(2)}%`} />
-              <HomePnlStat label="已用保证金" value={formatCurrency(paperSummary.used_margin)} />
-              <HomePnlStat label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} />
-              <HomePnlStat label="剩余可用" value={formatCurrency(availableMargin)} tone={availableMargin >= 0 ? "mint" : "coral"} />
-              <HomePnlStat label="总盈亏" value={formatCurrency(paperSummary.total_pnl)} tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
-              <HomePnlStat label="占总资金" value={`${paperSummary.total_pnl_percent >= 0 ? "+" : ""}${paperSummary.total_pnl_percent}%`} tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
+            <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+              <HomePnlStat label="总资金" value={formatCurrency(paperSummary.account_balance)} hint="模拟本金" />
+              <HomePnlStat label="可用资金" value={formatCurrency(availableMargin)} hint="本金 + 累计盈亏 - 已用保证金" tone={availableMargin >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="已用保证金" value={formatCurrency(paperSummary.used_margin)} hint="真实占用本金" />
+              <HomePnlStat label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} hint="已用保证金 / 总资金" />
+              <HomePnlStat label="名义仓位" value={formatCurrency(paperSummary.open_notional)} hint="保证金 × 杠杆后的敞口" />
+              <HomePnlStat label="名义仓位 / 本金" value={`${notionalExposureRatio.toFixed(2)}%`} hint="敞口大小，不是本金占用" />
+              <HomePnlStat label="当前浮盈亏" value={formatCurrency(paperSummary.unrealized_pnl)} hint="未平仓持仓盈亏" tone={paperSummary.unrealized_pnl >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="持仓笔数" value={`${paperSummary.open_trades} 笔`} hint={`每笔名义 ${formatCurrency(perTradeNotional)}`} />
+              <HomePnlStat label="累计盈亏" value={formatCurrency(paperSummary.total_pnl)} hint="已实现 + 未实现" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="累计收益率" value={`${paperSummary.total_pnl_percent >= 0 ? "+" : ""}${paperSummary.total_pnl_percent}%`} hint="累计盈亏 / 总资金" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
               <Link href="/paper" className="rounded border border-ink/10 bg-white/80 p-3 hover:bg-white sm:p-4">
                 <p className="text-xs font-medium text-ink/50">模拟详情</p>
                 <p className="mt-2 text-xl font-semibold text-ink sm:text-2xl">查看</p>
+                <p className="mt-1 text-[11px] leading-4 text-ink/45">查看每日、7日、30日表现</p>
               </Link>
             </div>
           </div>
@@ -88,9 +92,24 @@ export default async function DashboardPage() {
                       </span>
                     </div>
                     <div className="space-y-1 text-xs leading-5 text-ink/65">
-                      <p>机会分：{trade.opportunity_score}/100</p>
-                      <p>保证金：{formatCurrency(trade.margin_usdt)}</p>
-                      <p>名义仓位：{formatCurrency(trade.notional_usdt)}</p>
+                      <p>机会分：{trade.opportunity_score}/100 · 盈亏比：{formatRiskReward(calculateTradeRiskReward(trade.side, trade.entry_price, trade.take_profit, trade.stop_loss))}</p>
+                      <div className="grid grid-cols-2 gap-2 py-1">
+                        <TradePriceStat label="开仓价" value={formatCurrency(trade.entry_price)} />
+                        <TradePriceStat label="现价" value={formatCurrency(trade.current_price)} />
+                        <TradePriceStat
+                          label="止盈价"
+                          value={trade.take_profit ? formatCurrency(trade.take_profit) : "暂无"}
+                          subValue={trade.take_profit ? formatSignedCurrency(calculateProjectedPnl(trade.side, trade.entry_price, trade.take_profit, trade.notional_usdt)) : undefined}
+                          tone="mint"
+                        />
+                        <TradePriceStat
+                          label="止损价"
+                          value={trade.stop_loss ? formatCurrency(trade.stop_loss) : "暂无"}
+                          subValue={trade.stop_loss ? formatSignedCurrency(calculateProjectedPnl(trade.side, trade.entry_price, trade.stop_loss, trade.notional_usdt)) : undefined}
+                          tone="coral"
+                        />
+                      </div>
+                      <p>保证金：{formatCurrency(trade.margin_usdt)} · 名义仓位：{formatCurrency(trade.notional_usdt)}</p>
                       <p className={trade.pnl_usdt >= 0 ? "font-semibold text-mint" : "font-semibold text-coral"}>
                         盈亏：{formatCurrency(trade.pnl_usdt)} / {trade.pnl_percent}%
                       </p>
@@ -105,6 +124,10 @@ export default async function DashboardPage() {
             )}
           </div>
         </section>
+
+        <div className="mb-6">
+          <RefreshCadence status={schedulerStatus} />
+        </div>
 
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
           <MetricCard label="追踪资产" value={assets.length} />
@@ -133,12 +156,53 @@ export default async function DashboardPage() {
   );
 }
 
-function HomePnlStat({ label, value, tone = "ink" }: { label: string; value: string; tone?: "ink" | "mint" | "coral" }) {
+function HomePnlStat({ label, value, hint, tone = "ink" }: { label: string; value: string; hint?: string; tone?: "ink" | "mint" | "coral" }) {
   const color = tone === "mint" ? "text-mint" : tone === "coral" ? "text-coral" : "text-ink";
   return (
     <div className="min-w-0 rounded border border-ink/10 bg-white/80 p-3 sm:p-4">
       <p className="text-xs font-medium text-ink/50">{label}</p>
       <p className={`mt-2 break-words text-xl font-semibold tabular-nums sm:text-2xl ${color}`}>{value}</p>
+      {hint ? <p className="mt-1 text-[11px] leading-4 text-ink/45">{hint}</p> : null}
     </div>
   );
+}
+
+function TradePriceStat({ label, value, subValue, tone = "ink" }: { label: string; value: string; subValue?: string; tone?: "ink" | "mint" | "coral" }) {
+  const color = tone === "mint" ? "text-mint" : tone === "coral" ? "text-coral" : "text-ink";
+  return (
+    <div className="min-w-0 rounded bg-panel p-2">
+      <p className="text-[11px] text-ink/45">{label}</p>
+      <p className={`mt-1 break-words text-xs font-semibold tabular-nums ${color}`}>{value}</p>
+      {subValue ? <p className={`mt-0.5 break-words text-[11px] font-semibold tabular-nums ${color}`}>{subValue}</p> : null}
+    </div>
+  );
+}
+
+function calculateProjectedPnl(side: string, entryPrice: number, targetPrice: number, notional: number): number {
+  if (entryPrice <= 0) {
+    return 0;
+  }
+  const ratio = side === "做空" ? (entryPrice - targetPrice) / entryPrice : (targetPrice - entryPrice) / entryPrice;
+  return ratio * notional;
+}
+
+function formatSignedCurrency(value: number): string {
+  const formatted = formatCurrency(Math.abs(value));
+  return `${value >= 0 ? "+" : "-"}${formatted}`;
+}
+
+function calculateTradeRiskReward(side: string, entryPrice: number, takeProfit: number | null, stopLoss: number | null): number | null {
+  if (entryPrice <= 0 || !takeProfit || !stopLoss) {
+    return null;
+  }
+  const reward = Math.abs(calculateProjectedPnl(side, entryPrice, takeProfit, 1));
+  const risk = Math.abs(calculateProjectedPnl(side, entryPrice, stopLoss, 1));
+  if (risk <= 0) {
+    return null;
+  }
+  return reward / risk;
+}
+
+function formatRiskReward(value: number | null): string {
+  return value ? `${value.toFixed(2)}:1` : "暂无";
 }

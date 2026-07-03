@@ -1,8 +1,17 @@
 export function formatCurrency(value: number): string {
+  const absValue = Math.abs(value);
+  const maximumFractionDigits =
+    absValue >= 1000 ? 0 :
+    absValue >= 1 ? 2 :
+    absValue >= 0.01 ? 4 :
+    absValue >= 0.0001 ? 6 :
+    absValue > 0 ? 10 :
+    2;
+
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: value > 1000 ? 0 : 2
+    maximumFractionDigits
   }).format(value);
 }
 

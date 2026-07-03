@@ -102,3 +102,17 @@ export type PaperTrade = {
   closed_at: string | null;
   close_reason: string | null;
 };
+
+export type SchedulerStatus = {
+  enabled: boolean;
+  tasks: {
+    market_scan_minutes: number;
+    candidate_scan_minutes: number;
+    paper_position_minutes: number;
+    technical_refresh_minutes: number;
+    daily_snapshot: string;
+  };
+  candidate_min_opportunity_score: number;
+  paper_min_opportunity_score: number;
+  technical_refresh_limit: number;
+};

@@ -1,4 +1,4 @@
-import { Asset, EquityCurvePoint, OhlcCandle, PaperTrade, PaperTradingSummary } from "@/types/asset";
+import { Asset, EquityCurvePoint, OhlcCandle, PaperTrade, PaperTradingSummary, SchedulerStatus } from "@/types/asset";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -46,6 +46,14 @@ export async function getEquityCurve(days = 30): Promise<EquityCurvePoint[]> {
   const response = await fetch(`${API_BASE_URL}/paper-trading/equity-curve?days=${days}`, { next: { revalidate: 30 } });
   if (!response.ok) {
     throw new Error("Unable to load equity curve");
+  }
+  return response.json();
+}
+
+export async function getSchedulerStatus(): Promise<SchedulerStatus> {
+  const response = await fetch(`${API_BASE_URL}/scheduler/status`, { next: { revalidate: 60 } });
+  if (!response.ok) {
+    throw new Error("Unable to load scheduler status");
   }
   return response.json();
 }

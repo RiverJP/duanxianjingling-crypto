@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { Header } from "@/components/Header";
 import { MetricCard } from "@/components/MetricCard";
-import { getEquityCurve, getPaperTrades, getPaperTradingSummary } from "@/lib/api";
+import { RefreshCadence } from "@/components/RefreshCadence";
+import { getEquityCurve, getPaperTrades, getPaperTradingSummary, getSchedulerStatus } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { EquityCurvePoint } from "@/types/asset";
 
 export const dynamic = "force-dynamic";
 
 export default async function PaperTradingPage() {
-  const [summary, trades, equityCurve] = await Promise.all([getPaperTradingSummary(), getPaperTrades(), getEquityCurve(30)]);
+  const [summary, trades, equityCurve, schedulerStatus] = await Promise.all([getPaperTradingSummary(), getPaperTrades(), getEquityCurve(30), getSchedulerStatus()]);
   const openTrades = trades.filter((trade) => trade.status === "open");
   const floatingPnlPercent = summary.used_margin > 0 ? (summary.unrealized_pnl / summary.used_margin) * 100 : 0;
   const availableMargin = summary.account_balance + summary.total_pnl - summary.used_margin;
@@ -137,8 +138,10 @@ export default async function PaperTradingPage() {
               <p>开单条件：机会分达到 {summary.min_opportunity_score}，交易方向不是观望，并且系统已经给出止盈止损。</p>
               <p>开单资金：模拟账户 {formatCurrency(summary.account_balance)}，每次使用 {formatCurrency(summary.margin_per_trade)} 保证金，{summary.leverage} 倍杠杆。</p>
               <p>平仓条件：刷新时如果价格触达止盈或止损，则按当前刷新价格模拟平仓。</p>
-              <p>刷新频率：后端每 30 分钟自动刷新市场数据，并同步更新模拟持仓盈亏。</p>
               <p>用途：这个页面用于观察评分策略效果，不连接真实交易所，也不会真实下单。</p>
+            </div>
+            <div className="mt-5">
+              <RefreshCadence status={schedulerStatus} compact />
             </div>
           </div>
         </section>

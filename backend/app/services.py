@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.ai import generate_summary
 from app.config import get_settings
-from app.models import AssetSnapshot
+from app.models import AssetSnapshot, PaperTrade
 from app.scoring import calculate_scores
 from app.technicals import calculate_technicals, empty_technicals
 from app.trade_logic import build_trade_plan
@@ -18,22 +18,26 @@ OHLC_CACHE_TTL_SECONDS = 900
 OHLC_CACHE: dict[str, tuple[float, list[dict[str, float | int]]]] = {}
 
 
-async def fetch_market_data() -> list[dict]:
+async def fetch_market_data(coingecko_ids: list[str] | None = None) -> list[dict]:
     settings = get_settings()
     headers = {}
     if settings.coingecko_api_key:
         headers["x-cg-demo-api-key"] = settings.coingecko_api_key
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": settings.tracked_asset_count,
+        "page": 1,
+        "sparkline": "false",
+    }
+    if coingecko_ids:
+        params["ids"] = ",".join(coingecko_ids)
+        params["per_page"] = min(max(len(coingecko_ids), 1), 250)
 
     async with httpx.AsyncClient(base_url=settings.coingecko_base_url, timeout=20) as client:
         response = await client.get(
             "/coins/markets",
-            params={
-                "vs_currency": "usd",
-                "order": "market_cap_desc",
-                "per_page": settings.tracked_asset_count,
-                "page": 1,
-                "sparkline": "false",
-            },
+            params=params,
             headers=headers,
         )
         response.raise_for_status()
@@ -170,8 +174,85 @@ async def fetch_binance_4h_ohlc(symbol: str) -> list[dict[str, float | int]]:
 
 
 async def refresh_assets(db: Session) -> list[AssetSnapshot]:
-    settings = get_settings()
     rows = await fetch_market_data()
+    return await upsert_market_rows(db, rows, include_summary=True, include_core_technicals=True)
+
+
+async def refresh_candidate_assets(db: Session) -> list[AssetSnapshot]:
+    candidates = select_candidate_assets(db)
+    if not candidates:
+        return []
+    rows = await fetch_market_data([asset.coingecko_id for asset in candidates])
+    return await upsert_market_rows(db, rows, include_summary=False, include_core_technicals=False)
+
+
+async def refresh_open_trade_assets(db: Session) -> list[AssetSnapshot]:
+    symbols = list(db.scalars(select(PaperTrade.symbol).where(PaperTrade.status == "open")))
+    if not symbols:
+        return []
+    assets = list(db.scalars(select(AssetSnapshot).where(AssetSnapshot.symbol.in_(symbols))))
+    if not assets:
+        return []
+    rows = await fetch_market_data([asset.coingecko_id for asset in assets])
+    return await upsert_market_rows(db, rows, include_summary=False, include_core_technicals=False)
+
+
+async def refresh_technical_indicators(db: Session) -> list[AssetSnapshot]:
+    settings = get_settings()
+    assets = list(
+        db.scalars(
+            select(AssetSnapshot)
+            .where(
+                (AssetSnapshot.symbol.in_(settings.core_technical_symbol_list))
+                | (AssetSnapshot.opportunity_score >= settings.candidate_min_opportunity_score)
+            )
+            .order_by(AssetSnapshot.opportunity_score.desc(), AssetSnapshot.market_cap.desc())
+            .limit(settings.technical_refresh_limit)
+        )
+    )
+    refreshed: list[AssetSnapshot] = []
+    for asset in assets:
+        candles = await fetch_ohlc_data(asset.symbol, asset.coingecko_id)
+        if not candles:
+            continue
+        technicals = calculate_technicals(
+            prices=[float(candle["close"]) for candle in candles],
+            volumes=[],
+            current_price=asset.current_price,
+        )
+        technicals["technical_note"] = f"后台每 {settings.technical_refresh_interval_minutes} 分钟重算；当前基于 {len(candles)} 根 4 小时 K 线。"
+        for key, value in technicals.items():
+            setattr(asset, key, value)
+        refreshed.append(asset)
+    db.commit()
+    return refreshed
+
+
+def select_candidate_assets(db: Session) -> list[AssetSnapshot]:
+    settings = get_settings()
+    open_symbols = set(db.scalars(select(PaperTrade.symbol).where(PaperTrade.status == "open")))
+    candidates = list(
+        db.scalars(
+            select(AssetSnapshot)
+            .where(
+                (AssetSnapshot.opportunity_score >= settings.candidate_min_opportunity_score)
+                | (AssetSnapshot.opportunity_status.in_(["高优先级", "可关注"]))
+                | (AssetSnapshot.symbol.in_(open_symbols or ["__none__"]))
+            )
+            .order_by(AssetSnapshot.opportunity_score.desc(), AssetSnapshot.market_cap.desc())
+            .limit(50)
+        )
+    )
+    return candidates
+
+
+async def upsert_market_rows(
+    db: Session,
+    rows: list[dict],
+    include_summary: bool,
+    include_core_technicals: bool,
+) -> list[AssetSnapshot]:
+    settings = get_settings()
     refreshed: list[AssetSnapshot] = []
 
     for row in rows:
@@ -180,7 +261,7 @@ async def refresh_assets(db: Session) -> list[AssetSnapshot]:
         volume_24h = float(row.get("total_volume") or 0)
         current_price = float(row.get("current_price") or 0)
         symbol = row["symbol"].upper()
-        if symbol in settings.core_technical_symbol_list:
+        if include_core_technicals and symbol in settings.core_technical_symbol_list:
             historical = await fetch_historical_data(row["id"])
             technicals = calculate_technicals(
                 prices=historical["prices"],
@@ -198,16 +279,6 @@ async def refresh_assets(db: Session) -> list[AssetSnapshot]:
             liquidity_score=scores["liquidity_score"],
             risk_score=scores["risk_score"],
         )
-        summary = await generate_summary(
-            name=row["name"],
-            symbol=row["symbol"],
-            price=current_price,
-            change_24h=change_24h,
-            market_cap=market_cap,
-            volume_24h=volume_24h,
-            liquidity_score=scores["liquidity_score"],
-            risk_score=scores["risk_score"],
-        )
 
         asset = db.scalar(select(AssetSnapshot).where(AssetSnapshot.coingecko_id == row["id"]))
         if asset is None:
@@ -221,7 +292,17 @@ async def refresh_assets(db: Session) -> list[AssetSnapshot]:
         asset.market_cap = market_cap
         asset.volume_24h = volume_24h
         asset.change_24h = change_24h
-        asset.ai_summary = summary
+        if include_summary or not asset.ai_summary:
+            asset.ai_summary = await generate_summary(
+                name=row["name"],
+                symbol=row["symbol"],
+                price=current_price,
+                change_24h=change_24h,
+                market_cap=market_cap,
+                volume_24h=volume_24h,
+                liquidity_score=scores["liquidity_score"],
+                risk_score=scores["risk_score"],
+            )
         asset.source_updated_at = parse_datetime(row.get("last_updated"))
         asset.refreshed_at = datetime.utcnow()
         for key, value in scores.items():
