@@ -12,6 +12,7 @@ from app.models import AssetSnapshot, PaperTrade
 from app.paper_trading import apply_paper_trading, build_equity_curve, build_paper_trading_summary
 from app.schemas import AssetOut, EquityCurvePointOut, OhlcCandleOut, PaperTradeOut, PaperTradingSummaryOut, RefreshOut
 from app.services import fetch_ohlc_data, refresh_assets
+from app.technicals import calculate_technicals
 
 settings = get_settings()
 app = FastAPI(title="短线精灵 API", version="0.1.0")
@@ -130,10 +131,22 @@ def list_opportunities(limit: int = 20, db: Session = Depends(get_db)) -> list[A
 
 
 @app.get("/assets/{symbol}", response_model=AssetOut)
-def get_asset(symbol: str, db: Session = Depends(get_db)) -> AssetSnapshot:
+async def get_asset(symbol: str, db: Session = Depends(get_db)) -> AssetSnapshot:
     asset = db.scalar(select(AssetSnapshot).where(AssetSnapshot.symbol == symbol.upper()))
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
+    candles = await fetch_ohlc_data(asset.symbol, asset.coingecko_id)
+    if candles:
+        technicals = calculate_technicals(
+            prices=[float(candle["close"]) for candle in candles],
+            volumes=[],
+            current_price=asset.current_price,
+        )
+        technicals["technical_note"] = f"基于 {len(candles)} 根 4 小时 K 线动态计算；量价关系需要成交量序列，当前以价格技术指标为主。"
+        for key, value in technicals.items():
+            setattr(asset, key, value)
+        db.commit()
+        db.refresh(asset)
     return asset
 
 
