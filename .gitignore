@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.production.example
+
+node_modules
+.next
+__pycache__
+.pytest_cache
+.venv
+
+postgres_data
+caddy_data
+caddy_config

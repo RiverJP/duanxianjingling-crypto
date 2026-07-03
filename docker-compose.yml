@@ -1,0 +1,54 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: crypto_research
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d crypto_research"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/crypto_research
+      COINGECKO_BASE_URL: https://api.coingecko.com/api/v3
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      REFRESH_TOKEN: ${REFRESH_TOKEN:-change-me}
+      CORS_ORIGINS: http://localhost:3000
+      TRACKED_ASSET_COUNT: ${TRACKED_ASSET_COUNT:-100}
+      CORE_TECHNICAL_SYMBOLS: ${CORE_TECHNICAL_SYMBOLS:-BTC,ETH}
+      AUTO_REFRESH_ENABLED: ${AUTO_REFRESH_ENABLED:-true}
+      AUTO_REFRESH_INTERVAL_MINUTES: ${AUTO_REFRESH_INTERVAL_MINUTES:-30}
+      PAPER_ACCOUNT_BALANCE: ${PAPER_ACCOUNT_BALANCE:-10000}
+      PAPER_MARGIN_PER_TRADE: ${PAPER_MARGIN_PER_TRADE:-500}
+      PAPER_LEVERAGE: ${PAPER_LEVERAGE:-5}
+      PAPER_MIN_OPPORTUNITY_SCORE: ${PAPER_MIN_OPPORTUNITY_SCORE:-80}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

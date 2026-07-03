@@ -1,0 +1,80 @@
+CREATE TABLE IF NOT EXISTS asset_snapshots (
+    id SERIAL PRIMARY KEY,
+    coingecko_id VARCHAR(64) UNIQUE NOT NULL,
+    symbol VARCHAR(16) UNIQUE NOT NULL,
+    name VARCHAR(96) NOT NULL,
+    image_url VARCHAR(512),
+    current_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+    market_cap DOUBLE PRECISION NOT NULL DEFAULT 0,
+    volume_24h DOUBLE PRECISION NOT NULL DEFAULT 0,
+    change_24h DOUBLE PRECISION NOT NULL DEFAULT 0,
+    ai_score INTEGER NOT NULL DEFAULT 50,
+    trend_score INTEGER NOT NULL DEFAULT 50,
+    liquidity_score INTEGER NOT NULL DEFAULT 50,
+    risk_score INTEGER NOT NULL DEFAULT 50,
+    trade_signal VARCHAR(16) NOT NULL DEFAULT '观望',
+    entry_price DOUBLE PRECISION,
+    stop_loss DOUBLE PRECISION,
+    take_profit DOUBLE PRECISION,
+    risk_reward_ratio DOUBLE PRECISION,
+    trade_rationale TEXT NOT NULL DEFAULT '',
+    opportunity_score INTEGER NOT NULL DEFAULT 0,
+    opportunity_status VARCHAR(24) NOT NULL DEFAULT '观察',
+    opportunity_type VARCHAR(16) NOT NULL DEFAULT '观望',
+    trigger_price DOUBLE PRECISION,
+    invalid_price DOUBLE PRECISION,
+    opportunity_reason TEXT NOT NULL DEFAULT '',
+    fib_236 DOUBLE PRECISION,
+    fib_382 DOUBLE PRECISION,
+    fib_500 DOUBLE PRECISION,
+    fib_618 DOUBLE PRECISION,
+    fib_786 DOUBLE PRECISION,
+    dt_upper DOUBLE PRECISION,
+    dt_lower DOUBLE PRECISION,
+    dt_signal VARCHAR(32) NOT NULL DEFAULT '数据不足',
+    vegas_fast DOUBLE PRECISION,
+    vegas_slow DOUBLE PRECISION,
+    vegas_signal VARCHAR(32) NOT NULL DEFAULT '数据不足',
+    trend_line VARCHAR(32) NOT NULL DEFAULT '数据不足',
+    support_level DOUBLE PRECISION,
+    resistance_level DOUBLE PRECISION,
+    market_cycle VARCHAR(32) NOT NULL DEFAULT '数据不足',
+    volume_price_relation VARCHAR(32) NOT NULL DEFAULT '数据不足',
+    ma_50 DOUBLE PRECISION,
+    ma_100 DOUBLE PRECISION,
+    ma_200 DOUBLE PRECISION,
+    technical_note TEXT NOT NULL DEFAULT '',
+    ai_summary TEXT NOT NULL DEFAULT '',
+    source_updated_at TIMESTAMPTZ,
+    refreshed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ix_asset_snapshots_coingecko_id ON asset_snapshots (coingecko_id);
+CREATE INDEX IF NOT EXISTS ix_asset_snapshots_symbol ON asset_snapshots (symbol);
+
+CREATE TABLE IF NOT EXISTS paper_trades (
+    id SERIAL PRIMARY KEY,
+    symbol VARCHAR(16) NOT NULL,
+    name VARCHAR(96) NOT NULL,
+    side VARCHAR(16) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'open',
+    entry_price DOUBLE PRECISION NOT NULL,
+    current_price DOUBLE PRECISION NOT NULL,
+    exit_price DOUBLE PRECISION,
+    stop_loss DOUBLE PRECISION,
+    take_profit DOUBLE PRECISION,
+    margin_usdt DOUBLE PRECISION NOT NULL DEFAULT 500,
+    leverage INTEGER NOT NULL DEFAULT 5,
+    notional_usdt DOUBLE PRECISION NOT NULL DEFAULT 2500,
+    opportunity_score INTEGER NOT NULL DEFAULT 0,
+    pnl_usdt DOUBLE PRECISION NOT NULL DEFAULT 0,
+    pnl_percent DOUBLE PRECISION NOT NULL DEFAULT 0,
+    opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    closed_at TIMESTAMPTZ,
+    close_reason VARCHAR(32)
+);
+
+CREATE INDEX IF NOT EXISTS ix_paper_trades_symbol ON paper_trades (symbol);
+CREATE INDEX IF NOT EXISTS ix_paper_trades_status ON paper_trades (status);
+CREATE INDEX IF NOT EXISTS ix_paper_trades_opened_at ON paper_trades (opened_at);
+CREATE INDEX IF NOT EXISTS ix_paper_trades_closed_at ON paper_trades (closed_at);
