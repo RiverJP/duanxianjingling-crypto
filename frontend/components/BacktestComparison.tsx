@@ -59,7 +59,7 @@ function ComparisonCard({ item }: { item: BacktestComparisonItem }) {
   const netPnlPercent = summary.net_pnl_percent ?? summary.total_pnl_percent;
   return (
     <Link
-      href={`/backtest?days=${item.days}&interval=15m&version=${item.summary?.strategy_version === "2026-07-04指标策略" ? "v1" : item.summary?.strategy_version === "2026-07-04v2" ? "v2" : "v3"}`}
+      href={`/backtest?days=${item.days}&interval=15m&version=v3`}
       className={`block rounded border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${
         summary.total_pnl >= 0 ? "border-mint/20 bg-mint/10" : "border-coral/20 bg-coral/10"
       }`}
