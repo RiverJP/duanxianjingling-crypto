@@ -3,6 +3,7 @@ import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from time import time
+from typing import Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,7 +33,14 @@ MAX_STRUCTURE_STOP_DISTANCE_RATIO = 0.05
 BACKTEST_FEE_RATE = 0.0012
 
 
-async def run_month_backtest(db: Session, days: int = 30, limit: int = 100, interval: str = "1h", mode: str = "indicator") -> dict:
+async def run_month_backtest(
+    db: Session,
+    days: int = 30,
+    limit: int = 100,
+    interval: str = "1h",
+    mode: str = "indicator",
+    progress_callback: Callable[[dict], None] | None = None,
+) -> dict:
     settings = get_settings()
     execution_interval = normalize_kline_interval(interval)
     strategy_mode = "score" if mode == "score" else "indicator"
@@ -51,6 +59,16 @@ async def run_month_backtest(db: Session, days: int = 30, limit: int = 100, inte
             .limit(capped_limit)
         )
     )
+    if progress_callback:
+        progress_callback(
+            {
+                "total_assets": len(assets),
+                "completed_assets": 0,
+                "current_asset": None,
+                "total_trades": 0,
+            }
+        )
+
     async def run_asset(asset: AssetSnapshot) -> dict:
         candles = load_ohlc_from_db(db, asset.symbol, execution_interval, capped_days)
         asset_execution_interval = execution_interval
@@ -83,23 +101,52 @@ async def run_month_backtest(db: Session, days: int = 30, limit: int = 100, inte
 
     semaphore = asyncio.Semaphore(1)
 
-    async def run_asset_limited(asset: AssetSnapshot) -> dict:
+    async def run_asset_limited(index: int, asset: AssetSnapshot) -> dict:
         async with semaphore:
+            if progress_callback:
+                progress_callback(
+                    {
+                        "total_assets": len(assets),
+                        "completed_assets": index - 1,
+                        "current_asset": asset.symbol,
+                    }
+                )
             try:
-                return await asyncio.wait_for(run_asset(asset), timeout=30)
+                result = await asyncio.wait_for(run_asset(asset), timeout=30)
             except TimeoutError:
-                return {
+                result = {
                     "trades": [],
                     "asset": build_asset_result(asset, 0, 0, "观望", [], "K线不足", execution_interval),
                 }
+            if progress_callback:
+                progress_callback(
+                    {
+                        "total_assets": len(assets),
+                        "completed_assets": index,
+                        "current_asset": asset.symbol,
+                        "last_asset_trades": len(result["trades"]),
+                    }
+                )
+            return result
 
-    results = await asyncio.gather(*(run_asset_limited(asset) for asset in assets))
+    results = []
+    for index, asset in enumerate(assets, start=1):
+        results.append(await run_asset_limited(index, asset))
 
     trades: list[dict] = []
     asset_results: list[dict] = []
     for result in results:
         trades.extend(result["trades"])
         asset_results.append(result["asset"])
+        if progress_callback:
+            progress_callback(
+                {
+                    "total_assets": len(assets),
+                    "completed_assets": len(asset_results),
+                    "current_asset": result["asset"]["symbol"],
+                    "total_trades": len(trades),
+                }
+            )
 
     trades.sort(key=lambda trade: trade["opened_at"])
     period_closed_trades = exclude_period_end_trades(trades)
@@ -146,6 +193,16 @@ async def run_month_backtest(db: Session, days: int = 30, limit: int = 100, inte
     result["summary"]["strategy_version"] = BACKTEST_STRATEGY_VERSION
     result["summary"]["generated_at"] = saved_run.created_at.isoformat() if saved_run.created_at else datetime.now(timezone.utc).isoformat()
     BACKTEST_CACHE[cache_key] = (time(), result)
+    if progress_callback:
+        progress_callback(
+            {
+                "total_assets": len(assets),
+                "completed_assets": len(assets),
+                "current_asset": None,
+                "total_trades": len(trades),
+                "run_key": saved_run.run_key,
+            }
+        )
     return result
 
 

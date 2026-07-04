@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 from contextlib import suppress
 from datetime import date, datetime, timedelta, timezone
 
@@ -32,6 +33,8 @@ from app.technicals import calculate_technicals
 settings = get_settings()
 app = FastAPI(title="短线精灵 API", version="0.1.0")
 auto_refresh_tasks: list[asyncio.Task] = []
+backtest_jobs: dict[str, dict] = {}
+backtest_job_tasks: dict[str, asyncio.Task] = {}
 
 BACKTEST_VERSION_ALIASES = {
     "v1": "indicator-v1.1",
@@ -60,7 +63,12 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     for task in auto_refresh_tasks:
         task.cancel()
+    for task in backtest_job_tasks.values():
+        task.cancel()
     for task in auto_refresh_tasks:
+        with suppress(asyncio.CancelledError):
+            await task
+    for task in backtest_job_tasks.values():
         with suppress(asyncio.CancelledError):
             await task
 
@@ -139,6 +147,61 @@ async def run_technical_refresh(db: Session) -> int:
 async def run_latest_klines(db: Session) -> int:
     result = await refresh_latest_klines(db)
     return int(result["imported_assets"])
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def run_backtest_job(job_id: str, days: int, limit: int, interval: str, mode: str) -> None:
+    job = backtest_jobs[job_id]
+    job.update({"status": "running", "started_at": now_iso(), "updated_at": now_iso()})
+    db = SessionLocal()
+    try:
+        def update_progress(update: dict) -> None:
+            job.update(update)
+            total = int(job.get("total_assets") or 0)
+            completed = int(job.get("completed_assets") or 0)
+            job["progress_percent"] = round(completed / total * 100, 2) if total else 0
+            job["updated_at"] = now_iso()
+            if "current_asset" in update:
+                print(
+                    f"backtest job {job_id}: {completed}/{total} "
+                    f"current={update.get('current_asset')} trades={job.get('total_trades', 0)}"
+                )
+
+        result = await run_month_backtest(
+            db,
+            days=days,
+            limit=limit,
+            interval=interval,
+            mode=mode,
+            progress_callback=update_progress,
+        )
+        summary = result["summary"]
+        job.update(
+            {
+                "status": "completed",
+                "completed_at": now_iso(),
+                "updated_at": now_iso(),
+                "progress_percent": 100,
+                "run_key": summary.get("run_key"),
+                "summary": summary,
+                "error": None,
+            }
+        )
+        print(f"backtest job {job_id} completed run_key={summary.get('run_key')}")
+    except asyncio.CancelledError:
+        db.rollback()
+        job.update({"status": "cancelled", "updated_at": now_iso(), "error": "cancelled"})
+        raise
+    except Exception as exc:
+        db.rollback()
+        job.update({"status": "failed", "updated_at": now_iso(), "error": str(exc)})
+        print(f"backtest job {job_id} failed: {exc}")
+    finally:
+        db.close()
+        backtest_job_tasks.pop(job_id, None)
 
 
 def verify_refresh_token(x_refresh_token: str | None) -> None:
@@ -532,6 +595,64 @@ async def paper_trading_reset(
         "refreshed_assets": len(refreshed_assets),
         "summary": build_paper_trading_summary(db),
     }
+
+
+@app.post("/backtest/jobs")
+async def backtest_job_start(
+    days: int = 30,
+    limit: int = 150,
+    interval: str = "15m",
+    mode: str = "indicator",
+    x_refresh_token: str | None = Header(default=None),
+) -> dict:
+    verify_refresh_token(x_refresh_token)
+    active_job = next(
+        (job for job in backtest_jobs.values() if job.get("status") in {"queued", "running"}),
+        None,
+    )
+    if active_job:
+        raise HTTPException(status_code=409, detail={"message": "Backtest job already running", "job": active_job})
+
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+        "started_at": None,
+        "completed_at": None,
+        "parameters": {
+            "days": days,
+            "limit": limit,
+            "interval": interval,
+            "mode": mode,
+        },
+        "total_assets": 0,
+        "completed_assets": 0,
+        "current_asset": None,
+        "last_asset_trades": 0,
+        "total_trades": 0,
+        "progress_percent": 0,
+        "run_key": None,
+        "summary": None,
+        "error": None,
+    }
+    backtest_jobs[job_id] = job
+    backtest_job_tasks[job_id] = asyncio.create_task(run_backtest_job(job_id, days, limit, interval, mode))
+    return job
+
+
+@app.get("/backtest/jobs")
+def backtest_job_list() -> list[dict]:
+    return sorted(backtest_jobs.values(), key=lambda item: str(item.get("created_at") or ""), reverse=True)
+
+
+@app.get("/backtest/jobs/{job_id}")
+def backtest_job_detail(job_id: str) -> dict:
+    job = backtest_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Backtest job not found")
+    return job
 
 
 @app.get("/backtest/month", response_model=BacktestResultOut)
