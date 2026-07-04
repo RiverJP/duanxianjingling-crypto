@@ -25,6 +25,9 @@ export default async function DashboardPage() {
   const notionalExposureRatio = paperSummary.account_balance > 0 ? (paperSummary.open_notional / paperSummary.account_balance) * 100 : 0;
   const perTradeNotional = paperSummary.margin_per_trade * paperSummary.leverage;
   const latestRefresh = formatLatestRefresh(assets.map((asset) => asset.refreshed_at).filter(Boolean) as string[]);
+  const universeLabel = schedulerStatus.market_universe_source === "binance_futures"
+    ? `币安 U 本位永续合约 24h 成交额前 ${schedulerStatus.tracked_asset_count} 个交易对`
+    : `CoinGecko 市值前 ${schedulerStatus.tracked_asset_count} 个标的`;
 
   return (
     <>
@@ -36,7 +39,7 @@ export default async function DashboardPage() {
             从市场前排标的里自动发现短线机会
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/60">
-            短线精灵默认扫描 CoinGecko 市值前 100 个标的，首页机会使用 v3 指标策略：15m 执行开单，1H/4H 过滤方向，日线结构确认，并按计划盈亏比筛掉低质量交易。
+            短线精灵默认扫描{universeLabel}，首页机会使用 v3 指标策略：15m 执行开单，1H/4H 过滤方向，日线结构确认，并按计划盈亏比筛掉低质量交易。
           </p>
           <p className="mt-2 text-xs text-ink/45">首页最后刷新：{latestRefresh}</p>
         </section>
@@ -44,7 +47,7 @@ export default async function DashboardPage() {
         <section className={`mb-6 rounded border p-4 sm:p-5 lg:p-6 ${paperSummary.unrealized_pnl >= 0 ? "border-mint/25 bg-mint/10" : "border-coral/25 bg-coral/10"}`}>
           <div className="mb-5 grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:items-end">
             <div className="min-w-0">
-              <p className="text-sm font-semibold uppercase tracking-wide text-ink/55">当前模拟持仓盈利</p>
+              <p className="text-sm font-semibold uppercase tracking-wide text-ink/55">当前模拟持仓盈亏</p>
               <p className={`mt-3 break-words text-5xl font-semibold leading-none tabular-nums sm:text-6xl ${paperSummary.unrealized_pnl >= 0 ? "text-mint" : "text-coral"}`}>
                 {formatCurrency(paperSummary.unrealized_pnl)}
               </p>
@@ -54,6 +57,11 @@ export default async function DashboardPage() {
               <p className="mt-3 text-sm leading-6 text-ink/65">
                 规则：先同步最新 15m/1H/4H K 线，再按 v3 指标策略筛选；机会分 &gt;= {paperSummary.min_opportunity_score}、方向为做多/做空、计划盈亏比 &gt;= 1:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆。
               </p>
+              {marginUsagePercent > 100 ? (
+                <p className="mt-2 text-sm leading-6 text-coral">
+                  当前已用保证金超过模拟本金，说明现有未平仓模拟持仓已经超额占用资金；这里仅展示持仓现状，不会自动清仓或改动持仓数据。
+                </p>
+              ) : null}
             </div>
             <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
               <HomePnlStat label="总资金" value={formatCurrency(paperSummary.account_balance)} hint="模拟本金" />
