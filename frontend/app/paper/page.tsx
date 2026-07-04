@@ -12,9 +12,10 @@ export default async function PaperTradingPage() {
   const [summary, trades, equityCurve, schedulerStatus] = await Promise.all([getPaperTradingSummary(), getPaperTrades(), getEquityCurve(30), getSchedulerStatus()]);
   const openTrades = trades.filter((trade) => trade.status === "open");
   const floatingPnlPercent = summary.used_margin > 0 ? (summary.unrealized_pnl / summary.used_margin) * 100 : 0;
-  const availableMargin = summary.account_balance + summary.total_pnl - summary.used_margin;
+  const availableMargin = summary.account_balance - summary.used_margin;
   const marginUsagePercent = summary.account_balance > 0 ? (summary.used_margin / summary.account_balance) * 100 : 0;
   const positionRatio = summary.account_balance > 0 ? (summary.open_notional / summary.account_balance) * 100 : 0;
+  const feeRatePercent = (summary.fee_rate * 100).toFixed(2);
 
   return (
     <>
@@ -24,7 +25,7 @@ export default async function PaperTradingPage() {
           <p className="text-sm font-medium uppercase tracking-wide text-ink/50">模拟观察</p>
           <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">10000U 模拟仓位验证</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/60">
-            模拟开仓按 v3 指标策略执行：先更新 15m/1H/4H K 线，再用 1H/4H 方向过滤、日线结构和计划盈亏比筛选。机会分达到 {summary.min_opportunity_score} 且计划盈亏比 &gt;= 1:1 时才开模拟单。每单保证金 {formatCurrency(summary.margin_per_trade)}，{summary.leverage} 倍杠杆。
+            模拟开仓按 v3 指标策略执行：先更新 15m/1H/4H K 线，再用 1H/4H 方向过滤、日线结构和计划盈亏比筛选。机会分达到 {summary.min_opportunity_score} 且计划盈亏比 &gt;= 1:1 时才开模拟单。每单保证金 {formatCurrency(summary.margin_per_trade)}，{summary.leverage} 倍杠杆；总保证金不超过模拟本金，盈亏已扣 {feeRatePercent}% 手续费磨损。
           </p>
         </section>
 
@@ -49,6 +50,7 @@ export default async function PaperTradingPage() {
               <HighlightStat label="累计盈亏" value={formatCurrency(summary.total_pnl)} tone={summary.total_pnl >= 0 ? "mint" : "coral"} />
               <HighlightStat label="占总资金" value={`${summary.total_pnl_percent >= 0 ? "+" : ""}${summary.total_pnl_percent}%`} tone={summary.total_pnl >= 0 ? "mint" : "coral"} />
               <HighlightStat label="已用保证金" value={formatCurrency(summary.used_margin)} />
+              <HighlightStat label="手续费磨损" value={formatCurrency(summary.total_fees)} tone="coral" />
             </div>
           </div>
         </section>
@@ -65,6 +67,7 @@ export default async function PaperTradingPage() {
           <MetricCard label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} />
           <MetricCard label="当前持仓" value={summary.open_trades} accent="gold" />
           <MetricCard label="胜率" value={`${summary.win_rate}%`} accent="mint" />
+          <MetricCard label="手续费磨损" value={formatCurrency(summary.total_fees)} accent="coral" />
         </section>
 
         <section className="mt-6 grid gap-4 md:grid-cols-4">
@@ -136,7 +139,8 @@ export default async function PaperTradingPage() {
             <h2 className="mb-4 text-lg font-semibold">规则说明</h2>
             <div className="space-y-3 text-sm leading-6 text-ink/70">
               <p>开单条件：v3 指标策略触发做多/做空，机会分达到 {summary.min_opportunity_score}，计划盈亏比 &gt;= 1:1，并且系统已经给出止盈止损。</p>
-              <p>开单资金：模拟账户 {formatCurrency(summary.account_balance)}，每次使用 {formatCurrency(summary.margin_per_trade)} 保证金，{summary.leverage} 倍杠杆。</p>
+              <p>开单资金：模拟账户 {formatCurrency(summary.account_balance)}，每次使用 {formatCurrency(summary.margin_per_trade)} 保证金，{summary.leverage} 倍杠杆；总保证金最多用满本金，不会超开。</p>
+              <p>手续费：每笔按名义仓位 {feeRatePercent}% 估算磨损，当前页面的单笔和汇总盈亏均为扣费后净值。</p>
               <p>平仓条件：刷新时如果价格触达止盈或止损，则按当前刷新价格模拟平仓；15m 单最长持仓 7 天，到期仍未触发则到期平仓。</p>
               <p>用途：这个页面用于观察评分策略效果，不连接真实交易所，也不会真实下单。</p>
             </div>
@@ -158,7 +162,7 @@ export default async function PaperTradingPage() {
                   <th className="px-4 py-3">入场 / 当前</th>
                   <th className="px-4 py-3">止盈 / 止损</th>
                   <th className="px-4 py-3">机会分</th>
-                  <th className="px-4 py-3">盈亏</th>
+                  <th className="px-4 py-3">净盈亏</th>
                   <th className="px-4 py-3">开仓时间</th>
                   <th className="px-4 py-3">平仓</th>
                 </tr>

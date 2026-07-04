@@ -26,7 +26,7 @@ def update_open_trades(db: Session, assets: list[AssetSnapshot]) -> None:
             continue
 
         trade.current_price = asset.current_price
-        trade.pnl_usdt = calculate_pnl(trade.side, trade.entry_price, asset.current_price, trade.notional_usdt)
+        trade.pnl_usdt = calculate_net_pnl(trade.side, trade.entry_price, asset.current_price, trade.notional_usdt)
         trade.pnl_percent = calculate_pnl_percent(trade.pnl_usdt, trade.margin_usdt)
 
         should_close, close_reason = should_close_trade(trade, asset.current_price)
@@ -40,8 +40,17 @@ def update_open_trades(db: Session, assets: list[AssetSnapshot]) -> None:
 def open_new_trades(db: Session, assets: list[AssetSnapshot]) -> None:
     settings = get_settings()
     open_symbols = set(db.scalars(select(PaperTrade.symbol).where(PaperTrade.status == "open")))
+    margin = settings.paper_margin_per_trade
+    leverage = settings.paper_leverage
+    max_used_margin = max(0, settings.paper_account_balance)
+    used_margin = sum(
+        trade.margin_usdt
+        for trade in db.scalars(select(PaperTrade).where(PaperTrade.status == "open"))
+    )
 
     for asset in assets:
+        if used_margin + margin > max_used_margin:
+            break
         if asset.symbol in open_symbols:
             continue
         if asset.opportunity_score < settings.paper_min_opportunity_score:
@@ -53,8 +62,8 @@ def open_new_trades(db: Session, assets: list[AssetSnapshot]) -> None:
         if not asset.stop_loss or not asset.take_profit or asset.current_price <= 0:
             continue
 
-        margin = settings.paper_margin_per_trade
-        leverage = settings.paper_leverage
+        notional = margin * leverage
+        opening_pnl = calculate_net_pnl(asset.trade_signal, asset.current_price, asset.current_price, notional)
         trade = PaperTrade(
             symbol=asset.symbol,
             name=asset.name,
@@ -66,13 +75,14 @@ def open_new_trades(db: Session, assets: list[AssetSnapshot]) -> None:
             take_profit=asset.take_profit,
             margin_usdt=margin,
             leverage=leverage,
-            notional_usdt=margin * leverage,
+            notional_usdt=notional,
             opportunity_score=asset.opportunity_score,
-            pnl_usdt=0,
-            pnl_percent=0,
+            pnl_usdt=opening_pnl,
+            pnl_percent=calculate_pnl_percent(opening_pnl, margin),
         )
         db.add(trade)
         open_symbols.add(asset.symbol)
+        used_margin += margin
 
 
 def should_close_trade(trade: PaperTrade, current_price: float) -> tuple[bool, str | None]:
@@ -102,6 +112,16 @@ def calculate_pnl(side: str, entry_price: float, current_price: float, notional:
     return round(value, 2)
 
 
+def calculate_trade_fee(notional: float) -> float:
+    settings = get_settings()
+    return round(max(0, notional) * settings.paper_fee_rate, 2)
+
+
+def calculate_net_pnl(side: str, entry_price: float, current_price: float, notional: float) -> float:
+    gross_pnl = calculate_pnl(side, entry_price, current_price, notional)
+    return round(gross_pnl - calculate_trade_fee(notional), 2)
+
+
 def calculate_pnl_percent(pnl_usdt: float, margin: float) -> float:
     if margin <= 0:
         return 0
@@ -119,11 +139,13 @@ def build_paper_trading_summary(db: Session) -> dict:
     unrealized_total = sum(trade.pnl_usdt for trade in open_trades)
     total_pnl = realized_total + unrealized_total
     open_notional = sum(trade.notional_usdt for trade in open_trades)
+    total_fees = sum(calculate_trade_fee(trade.notional_usdt) for trade in trades)
 
     return {
         "account_balance": settings.paper_account_balance,
         "margin_per_trade": settings.paper_margin_per_trade,
         "leverage": settings.paper_leverage,
+        "fee_rate": settings.paper_fee_rate,
         "min_opportunity_score": settings.paper_min_opportunity_score,
         "open_trades": len(open_trades),
         "closed_trades": len(closed_trades),
@@ -132,6 +154,7 @@ def build_paper_trading_summary(db: Session) -> dict:
         "realized_pnl": round(realized_total, 2),
         "unrealized_pnl": round(unrealized_total, 2),
         "total_pnl": round(total_pnl, 2),
+        "total_fees": round(total_fees, 2),
         "total_pnl_percent": round(total_pnl / settings.paper_account_balance * 100, 2) if settings.paper_account_balance else 0,
         "daily_pnl": round(period_pnl(closed_trades, now - timedelta(days=1)) + unrealized_total, 2),
         "seven_day_pnl": round(period_pnl(closed_trades, now - timedelta(days=7)) + unrealized_total, 2),

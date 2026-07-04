@@ -20,10 +20,11 @@ export default async function DashboardPage() {
   const highPriorityCount = assets.filter((asset) => asset.opportunity_status === "高优先级" || asset.opportunity_status === "可关注").length;
   const totalVolume = assets.reduce((sum, asset) => sum + asset.volume_24h, 0);
   const floatingPnlPercent = paperSummary.used_margin > 0 ? (paperSummary.unrealized_pnl / paperSummary.used_margin) * 100 : 0;
-  const availableMargin = paperSummary.account_balance + paperSummary.total_pnl - paperSummary.used_margin;
+  const availableMargin = paperSummary.account_balance - paperSummary.used_margin;
   const marginUsagePercent = paperSummary.account_balance > 0 ? (paperSummary.used_margin / paperSummary.account_balance) * 100 : 0;
   const notionalExposureRatio = paperSummary.account_balance > 0 ? (paperSummary.open_notional / paperSummary.account_balance) * 100 : 0;
   const perTradeNotional = paperSummary.margin_per_trade * paperSummary.leverage;
+  const feeRatePercent = (paperSummary.fee_rate * 100).toFixed(2);
   const latestRefresh = formatLatestRefresh(assets.map((asset) => asset.refreshed_at).filter(Boolean) as string[]);
   const universeLabel = schedulerStatus.market_universe_source === "binance_futures"
     ? `币安 U 本位永续合约 24h 成交额前 ${schedulerStatus.tracked_asset_count} 个交易对`
@@ -55,7 +56,7 @@ export default async function DashboardPage() {
                 {floatingPnlPercent >= 0 ? "+" : ""}{floatingPnlPercent.toFixed(2)}% / 按已用保证金计算
               </p>
               <p className="mt-3 text-sm leading-6 text-ink/65">
-                规则：先同步最新 15m/1H/4H K 线，再按 v3 指标策略筛选；机会分 &gt;= {paperSummary.min_opportunity_score}、方向为做多/做空、计划盈亏比 &gt;= 1:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆。
+                规则：先同步最新 15m/1H/4H K 线，再按 v3 指标策略筛选；机会分 &gt;= {paperSummary.min_opportunity_score}、方向为做多/做空、计划盈亏比 &gt;= 1:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆；已用保证金不会超过总资金，盈亏已扣 {feeRatePercent}% 手续费磨损。
               </p>
               {marginUsagePercent > 100 ? (
                 <p className="mt-2 text-sm leading-6 text-coral">
@@ -65,7 +66,7 @@ export default async function DashboardPage() {
             </div>
             <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
               <HomePnlStat label="总资金" value={formatCurrency(paperSummary.account_balance)} hint="模拟本金" />
-              <HomePnlStat label="可用资金" value={formatCurrency(availableMargin)} hint="本金 + 累计盈亏 - 已用保证金" tone={availableMargin >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="可用资金" value={formatCurrency(availableMargin)} hint="总资金 - 已用保证金" tone={availableMargin >= 0 ? "mint" : "coral"} />
               <HomePnlStat label="已用保证金" value={formatCurrency(paperSummary.used_margin)} hint="真实占用本金" />
               <HomePnlStat label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} hint="已用保证金 / 总资金" />
               <HomePnlStat label="名义仓位" value={formatCurrency(paperSummary.open_notional)} hint="保证金 × 杠杆后的敞口" />
@@ -73,6 +74,7 @@ export default async function DashboardPage() {
               <HomePnlStat label="当前浮盈亏" value={formatCurrency(paperSummary.unrealized_pnl)} hint="未平仓持仓盈亏" tone={paperSummary.unrealized_pnl >= 0 ? "mint" : "coral"} />
               <HomePnlStat label="持仓笔数" value={`${paperSummary.open_trades} 笔`} hint={`每笔名义 ${formatCurrency(perTradeNotional)}`} />
               <HomePnlStat label="累计盈亏" value={formatCurrency(paperSummary.total_pnl)} hint="已实现 + 未实现" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="手续费磨损" value={formatCurrency(paperSummary.total_fees)} hint={`${feeRatePercent}% × 每笔名义仓位`} tone="coral" />
               <HomePnlStat label="累计收益率" value={`${paperSummary.total_pnl_percent >= 0 ? "+" : ""}${paperSummary.total_pnl_percent}%`} hint="累计盈亏 / 总资金" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
               <Link href="/paper" className="rounded border border-ink/10 bg-white/80 p-3 hover:bg-white sm:p-4">
                 <p className="text-xs font-medium text-ink/50">模拟详情</p>
@@ -126,7 +128,7 @@ export default async function DashboardPage() {
                       </div>
                       <p>保证金：{formatCurrency(trade.margin_usdt)} · 名义仓位：{formatCurrency(trade.notional_usdt)}</p>
                       <p className={trade.pnl_usdt >= 0 ? "font-semibold text-mint" : "font-semibold text-coral"}>
-                        盈亏：{formatCurrency(trade.pnl_usdt)} / {trade.pnl_percent}%
+                        净盈亏：{formatCurrency(trade.pnl_usdt)} / {trade.pnl_percent}%
                       </p>
                     </div>
                   </Link>

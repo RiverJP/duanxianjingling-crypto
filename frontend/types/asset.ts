@@ -60,6 +60,7 @@ export type PaperTradingSummary = {
   account_balance: number;
   margin_per_trade: number;
   leverage: number;
+  fee_rate: number;
   min_opportunity_score: number;
   open_trades: number;
   closed_trades: number;
@@ -68,6 +69,7 @@ export type PaperTradingSummary = {
   realized_pnl: number;
   unrealized_pnl: number;
   total_pnl: number;
+  total_fees: number;
   total_pnl_percent: number;
   daily_pnl: number;
   seven_day_pnl: number;

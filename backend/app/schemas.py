@@ -96,6 +96,7 @@ class PaperTradingSummaryOut(BaseModel):
     account_balance: float
     margin_per_trade: float
     leverage: int
+    fee_rate: float
     min_opportunity_score: int
     open_trades: int
     closed_trades: int
@@ -104,6 +105,7 @@ class PaperTradingSummaryOut(BaseModel):
     realized_pnl: float
     unrealized_pnl: float
     total_pnl: float
+    total_fees: float
     total_pnl_percent: float
     daily_pnl: float
     seven_day_pnl: float

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     paper_margin_per_trade: float = 500
     paper_leverage: int = 5
     paper_min_opportunity_score: int = 80
+    paper_fee_rate: float = 0.0012
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
