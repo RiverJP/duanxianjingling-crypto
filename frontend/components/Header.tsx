@@ -15,9 +15,12 @@ export function Header() {
           <Link href="/paper" className="font-medium hover:text-ink">
             模拟观察
           </Link>
+          <Link href="/backtest" className="font-medium hover:text-ink">
+            回测
+          </Link>
           <div className="flex items-center gap-2">
             <RefreshCw size={16} />
-            30分钟自动刷新
+            15分钟自动刷新
           </div>
         </div>
       </div>

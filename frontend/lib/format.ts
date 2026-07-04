@@ -7,10 +7,12 @@ export function formatCurrency(value: number): string {
     absValue >= 0.0001 ? 6 :
     absValue > 0 ? 10 :
     2;
+  const minimumFractionDigits = absValue > 0 && absValue < 1 ? maximumFractionDigits : undefined;
 
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
+    minimumFractionDigits,
     maximumFractionDigits
   }).format(value);
 }

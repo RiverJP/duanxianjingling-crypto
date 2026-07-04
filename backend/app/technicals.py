@@ -1,9 +1,11 @@
 from statistics import mean
 
+from app.trade_logic import round_price
+
 
 def calculate_technicals(prices: list[float], volumes: list[float], current_price: float) -> dict[str, float | str | None]:
     clean_prices = [float(price) for price in prices if price is not None and price > 0]
-    clean_volumes = [float(volume) for volume in volumes if volume is not None and volume >= 0]
+    clean_volumes = [float(volume) for volume in volumes if volume is not None and volume > 0]
 
     if len(clean_prices) < 50:
         return empty_technicals("历史数据不足，暂无法计算完整技术参数。")
@@ -31,17 +33,17 @@ def calculate_technicals(prices: list[float], volumes: list[float], current_pric
         "dt_upper": dt["dt_upper"],
         "dt_lower": dt["dt_lower"],
         "dt_signal": dt["dt_signal"],
-        "vegas_fast": round(ema_144, 2) if ema_144 else None,
-        "vegas_slow": round(ema_169, 2) if ema_169 else None,
+        "vegas_fast": round_level(ema_144),
+        "vegas_slow": round_level(ema_169),
         "vegas_signal": vegas,
         "trend_line": trend,
-        "support_level": round(support, 2),
-        "resistance_level": round(resistance, 2),
+        "support_level": round_level(support),
+        "resistance_level": round_level(resistance),
         "market_cycle": cycle,
         "volume_price_relation": volume_price,
-        "ma_50": round(ma_50, 2) if ma_50 else None,
-        "ma_100": round(ma_100, 2) if ma_100 else None,
-        "ma_200": round(ma_200, 2) if ma_200 else None,
+        "ma_50": round_level(ma_50),
+        "ma_100": round_level(ma_100),
+        "ma_200": round_level(ma_200),
         "technical_note": "基于 CoinGecko 日频价格与成交量计算，DT 与趋势线为研究近似值。",
     }
 
@@ -94,11 +96,11 @@ def fibonacci_levels(values: list[float]) -> dict[str, float | None]:
     high = max(values)
     span = high - low
     return {
-        "fib_236": round(high - span * 0.236, 2),
-        "fib_382": round(high - span * 0.382, 2),
-        "fib_500": round(high - span * 0.5, 2),
-        "fib_618": round(high - span * 0.618, 2),
-        "fib_786": round(high - span * 0.786, 2),
+        "fib_236": round_level(high - span * 0.236),
+        "fib_382": round_level(high - span * 0.382),
+        "fib_500": round_level(high - span * 0.5),
+        "fib_618": round_level(high - span * 0.618),
+        "fib_786": round_level(high - span * 0.786),
     }
 
 
@@ -116,7 +118,13 @@ def dual_thrust_proxy(values: list[float], current_price: float) -> dict[str, fl
         signal = "跌破下轨"
     else:
         signal = "区间内"
-    return {"dt_upper": round(upper, 2), "dt_lower": round(lower, 2), "dt_signal": signal}
+    return {"dt_upper": round_level(upper), "dt_lower": round_level(lower), "dt_signal": signal}
+
+
+def round_level(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round_price(float(value))
 
 
 def trend_line_signal(values: list[float]) -> str:
@@ -168,7 +176,9 @@ def volume_price_relation(prices: list[float], volumes: list[float]) -> str:
     price_change = (prices[-1] - prices[-8]) / prices[-8] * 100
     recent_volume = mean(volumes[-7:])
     base_volume = mean(volumes[-30:])
-    volume_ratio = recent_volume / base_volume if base_volume else 0
+    if base_volume <= 0:
+        return "数据不足"
+    volume_ratio = recent_volume / base_volume
     if price_change > 0 and volume_ratio >= 1.15:
         return "放量上涨"
     if price_change > 0 and volume_ratio < 0.9:

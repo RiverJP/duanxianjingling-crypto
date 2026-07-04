@@ -110,9 +110,149 @@ export type SchedulerStatus = {
     candidate_scan_minutes: number;
     paper_position_minutes: number;
     technical_refresh_minutes: number;
+    latest_klines_minutes: number;
+    latest_kline_intervals: string[];
     daily_snapshot: string;
   };
   candidate_min_opportunity_score: number;
   paper_min_opportunity_score: number;
   technical_refresh_limit: number;
+  market_universe_source: string;
+  tracked_asset_count: number;
+};
+
+export type BacktestSummary = {
+  run_id: number | null;
+  run_key: string | null;
+  strategy_mode: string | null;
+  strategy_version: string | null;
+  generated_at: string | null;
+  days: number;
+  execution_interval: string;
+  trend_interval: string;
+  tested_assets: number;
+  traded_assets: number;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  win_rate: number;
+  total_pnl: number;
+  total_pnl_percent: number;
+  average_pnl: number;
+  fee_rate: number;
+  total_fees: number;
+  net_pnl: number;
+  net_pnl_percent: number;
+  average_net_pnl: number;
+  net_win_rate: number;
+  best_trade: number;
+  worst_trade: number;
+  excluded_period_end_trades: number;
+  excluded_low_risk_reward_trades: number;
+};
+
+export type BacktestRules = {
+  title: string;
+  mode: string;
+  version: string;
+  timeframes: string[];
+  entry_conditions: string[];
+  long_logic: string[];
+  short_logic: string[];
+  stop_loss_logic: string[];
+  take_profit_logic: string[];
+  exit_logic: string[];
+  indicator_analysis: string[];
+  risk_notes: string[];
+};
+
+export type BacktestTrade = {
+  symbol: string;
+  name: string;
+  side: string;
+  entry_price: number;
+  current_price: number;
+  exit_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  risk_reward_ratio: number | null;
+  margin_usdt: number;
+  leverage: number;
+  notional_usdt: number;
+  opportunity_score: number;
+  execution_interval: string;
+  strategy_type: string | null;
+  market_regime: string | null;
+  entry_reasons: string[];
+  indicator_snapshot: Record<string, unknown>;
+  opening_logic: string | null;
+  pnl_usdt: number;
+  pnl_percent: number;
+  opened_at: string;
+  closed_at: string | null;
+  close_reason: string | null;
+};
+
+export type BacktestAsset = {
+  symbol: string;
+  name: string;
+  market_cap: number;
+  candle_count: number;
+  best_opportunity_score: number;
+  best_signal: string;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  total_pnl: number;
+  status: string;
+  execution_interval: string;
+};
+
+export type BacktestResult = {
+  summary: BacktestSummary;
+  rules: BacktestRules;
+  equity_curve: EquityCurvePoint[];
+  trades: BacktestTrade[];
+  assets: BacktestAsset[];
+};
+
+export type BacktestRun = {
+  id: number;
+  run_key: string;
+  strategy_mode: string;
+  strategy_version: string;
+  days: number;
+  execution_interval: string;
+  trend_interval: string;
+  tested_assets: number;
+  total_trades: number;
+  total_pnl: number;
+  win_rate: number;
+  created_at: string;
+};
+
+export type BacktestComparisonItem = {
+  days: number;
+  label: string;
+  source_run_key: string | null;
+  source_days: number | null;
+  derived: boolean;
+  summary: BacktestSummary | null;
+};
+
+export type BacktestTradesPage = {
+  days: number;
+  interval: string;
+  mode: string;
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
+  filter_options: {
+    symbols: string[];
+    sides: string[];
+    results: string[];
+    strategy_types: string[];
+  };
+  trades: BacktestTrade[];
 };

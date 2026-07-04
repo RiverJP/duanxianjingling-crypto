@@ -24,6 +24,7 @@ export default async function DashboardPage() {
   const marginUsagePercent = paperSummary.account_balance > 0 ? (paperSummary.used_margin / paperSummary.account_balance) * 100 : 0;
   const notionalExposureRatio = paperSummary.account_balance > 0 ? (paperSummary.open_notional / paperSummary.account_balance) * 100 : 0;
   const perTradeNotional = paperSummary.margin_per_trade * paperSummary.leverage;
+  const latestRefresh = formatLatestRefresh(assets.map((asset) => asset.refreshed_at).filter(Boolean) as string[]);
 
   return (
     <>
@@ -35,8 +36,9 @@ export default async function DashboardPage() {
             从市场前排标的里自动发现短线机会
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/60">
-            短线精灵默认扫描 CoinGecko 市值前 100 个标的，按机会分、趋势、流动性和风险排序；完整 K 线、技术指标和模拟做单效果可进入详情页与模拟观察页查看。
+            短线精灵默认扫描 CoinGecko 市值前 100 个标的，首页机会使用 v3 指标策略：15m 执行开单，1H/4H 过滤方向，日线结构确认，并按计划盈亏比筛掉低质量交易。
           </p>
+          <p className="mt-2 text-xs text-ink/45">首页最后刷新：{latestRefresh}</p>
         </section>
 
         <section className={`mb-6 rounded border p-4 sm:p-5 lg:p-6 ${paperSummary.unrealized_pnl >= 0 ? "border-mint/25 bg-mint/10" : "border-coral/25 bg-coral/10"}`}>
@@ -50,7 +52,7 @@ export default async function DashboardPage() {
                 {floatingPnlPercent >= 0 ? "+" : ""}{floatingPnlPercent.toFixed(2)}% / 按已用保证金计算
               </p>
               <p className="mt-3 text-sm leading-6 text-ink/65">
-                规则：机会分 &gt;= {paperSummary.min_opportunity_score} 且方向为做多/做空时自动进入模拟开单；每单占用保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆，对应名义仓位 {formatCurrency(perTradeNotional)}。
+                规则：先同步最新 15m/1H/4H K 线，再按 v3 指标策略筛选；机会分 &gt;= {paperSummary.min_opportunity_score}、方向为做多/做空、计划盈亏比 &gt;= 1:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆。
               </p>
             </div>
             <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
@@ -92,7 +94,12 @@ export default async function DashboardPage() {
                       </span>
                     </div>
                     <div className="space-y-1 text-xs leading-5 text-ink/65">
-                      <p>机会分：{trade.opportunity_score}/100 · 盈亏比：{formatRiskReward(calculateTradeRiskReward(trade.side, trade.entry_price, trade.take_profit, trade.stop_loss))}</p>
+                      <p>机会分：{trade.opportunity_score}/100</p>
+                      <p>
+                        开仓盈亏比：{formatRiskReward(calculateTradeRiskReward(trade.side, trade.entry_price, trade.take_profit, trade.stop_loss))}
+                        <span className="mx-1 text-ink/35">/</span>
+                        当前剩余盈亏比：{formatRiskReward(calculateRemainingRiskReward(trade.side, trade.current_price, trade.take_profit, trade.stop_loss))}
+                      </p>
                       <div className="grid grid-cols-2 gap-2 py-1">
                         <TradePriceStat label="开仓价" value={formatCurrency(trade.entry_price)} />
                         <TradePriceStat label="现价" value={formatCurrency(trade.current_price)} />
@@ -119,7 +126,7 @@ export default async function DashboardPage() {
               </div>
             ) : (
               <p className="text-sm text-ink/60">
-                当前没有模拟持仓。下一次刷新后，机会分 &gt;= {paperSummary.min_opportunity_score} 的做多/做空标的会自动进入模拟开单。
+                当前没有模拟持仓。下一次刷新后，满足 v3 指标策略、机会分 &gt;= {paperSummary.min_opportunity_score} 且计划盈亏比 &gt;= 1:1 的标的会自动进入模拟开单。
               </p>
             )}
           </div>
@@ -138,8 +145,8 @@ export default async function DashboardPage() {
 
         <section className="mt-8">
           <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="text-xl font-semibold">市场机会列表</h2>
-            {leader ? <p className="text-sm text-ink/55">当前首选 {leader.symbol}，机会分 {leader.opportunity_score}/100，价格 {formatCurrency(leader.current_price)}</p> : null}
+            <h2 className="text-xl font-semibold">v3 市场机会列表</h2>
+            {leader ? <p className="text-sm text-ink/55">当前首选 {leader.symbol}，v3机会分 {leader.opportunity_score}/100，价格 {formatCurrency(leader.current_price)}</p> : null}
           </div>
           {assets.length ? (
             <div className="overflow-x-auto">
@@ -154,6 +161,17 @@ export default async function DashboardPage() {
       </main>
     </>
   );
+}
+
+function formatLatestRefresh(values: string[]): string {
+  if (!values.length) {
+    return "暂无";
+  }
+  const latest = values
+    .map((value) => new Date(value))
+    .filter((value) => !Number.isNaN(value.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime())[0];
+  return latest ? latest.toLocaleString("zh-CN") : "暂无";
 }
 
 function HomePnlStat({ label, value, hint, tone = "ink" }: { label: string; value: string; hint?: string; tone?: "ink" | "mint" | "coral" }) {
@@ -198,6 +216,24 @@ function calculateTradeRiskReward(side: string, entryPrice: number, takeProfit: 
   const reward = Math.abs(calculateProjectedPnl(side, entryPrice, takeProfit, 1));
   const risk = Math.abs(calculateProjectedPnl(side, entryPrice, stopLoss, 1));
   if (risk <= 0) {
+    return null;
+  }
+  return reward / risk;
+}
+
+function calculateRemainingRiskReward(side: string, currentPrice: number, takeProfit: number | null, stopLoss: number | null): number | null {
+  if (currentPrice <= 0 || !takeProfit || !stopLoss) {
+    return null;
+  }
+  const reward = Math.abs(calculateProjectedPnl(side, currentPrice, takeProfit, 1));
+  const risk = Math.abs(calculateProjectedPnl(side, currentPrice, stopLoss, 1));
+  if (risk <= 0) {
+    return null;
+  }
+  if (side === "做多" && (currentPrice >= takeProfit || currentPrice <= stopLoss)) {
+    return null;
+  }
+  if (side === "做空" && (currentPrice <= takeProfit || currentPrice >= stopLoss)) {
     return null;
   }
   return reward / risk;

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.models import AssetSnapshot, PaperDailySnapshot, PaperTrade
 
+PAPER_MAX_HOLDING_SECONDS = 7 * 24 * 3600
+
 
 def apply_paper_trading(db: Session, assets: list[AssetSnapshot], open_new: bool = True) -> None:
     update_open_trades(db, assets)
@@ -46,6 +48,8 @@ def open_new_trades(db: Session, assets: list[AssetSnapshot]) -> None:
             continue
         if asset.trade_signal not in {"做多", "做空"}:
             continue
+        if asset.risk_reward_ratio is None or asset.risk_reward_ratio < 1:
+            continue
         if not asset.stop_loss or not asset.take_profit or asset.current_price <= 0:
             continue
 
@@ -82,6 +86,9 @@ def should_close_trade(trade: PaperTrade, current_price: float) -> tuple[bool, s
             return True, "止盈"
         if trade.stop_loss and current_price >= trade.stop_loss:
             return True, "止损"
+    opened_at = normalize_datetime(trade.opened_at) if trade.opened_at else datetime.now(timezone.utc)
+    if datetime.now(timezone.utc) - opened_at >= timedelta(seconds=PAPER_MAX_HOLDING_SECONDS):
+        return True, "到期平仓"
     return False, None
 
 

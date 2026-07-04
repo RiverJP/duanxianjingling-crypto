@@ -119,7 +119,7 @@ export function TechnicalParameters({ asset, candles }: { asset: Asset; candles:
         { label: "入场", value: asset.entry_price, color: "#111827", kind: "dash" },
         { label: "止损", value: asset.stop_loss, color: "#e76f51" }
       ],
-      footer: `${asset.trade_signal}，盈亏比 ${asset.risk_reward_ratio ? `${asset.risk_reward_ratio}:1` : "暂无"}`
+      footer: `${asset.trade_signal}，当前计划盈亏比 ${asset.risk_reward_ratio ? `${asset.risk_reward_ratio}:1` : "暂无"}`
     },
     {
       title: "量价关系",

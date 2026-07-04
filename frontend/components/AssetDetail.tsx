@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { Calculator, ChevronLeft, Target } from "lucide-react";
+import { Activity, Calculator, ChevronLeft, Compass, GitBranch, Target } from "lucide-react";
 import { Asset, OhlcCandle } from "@/types/asset";
 import { formatCompactCurrency, formatCurrency, formatPercent } from "@/lib/format";
 import { MetricCard } from "@/components/MetricCard";
 import { ScoreBar } from "@/components/ScoreBar";
 import { TechnicalChart } from "@/components/TechnicalChart";
-import { TechnicalParameters } from "@/components/TechnicalParameters";
 
 export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCandle[] }) {
+  const strategyContext = buildStrategyContext(asset, candles);
   const volumeToCap = asset.market_cap > 0 ? asset.volume_24h / asset.market_cap : 0;
   const volatilityPenalty = Math.min(Math.abs(asset.change_24h) * 3, 35);
   const riskDiscount = asset.liquidity_score * 0.15;
@@ -19,6 +19,7 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
   const calculatedRisk = clampScore(55 + volatilityPenalty - riskDiscount);
   const calculatedAi = clampScore(asset.trend_score * 0.4 + asset.liquidity_score * 0.35 + riskReverse * 0.25);
   const calculatedOpportunity = clampScore(asset.ai_score * 0.35 + asset.trend_score * 0.3 + asset.liquidity_score * 0.2 + riskReverse * 0.15);
+  const calculatedShortOpportunity = clampScore((100 - asset.ai_score) * 0.35 + (100 - asset.trend_score) * 0.3 + asset.liquidity_score * 0.2 + riskReverse * 0.15);
   const longChecks = [
     { label: "趋势分 >= 62", passed: asset.trend_score >= 62 },
     { label: "24 小时涨幅 > 0", passed: asset.change_24h > 0 },
@@ -29,8 +30,8 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
   const shortChecks = [
     { label: "趋势分 <= 42", passed: asset.trend_score <= 42 },
     { label: "24 小时跌幅 < 0", passed: asset.change_24h < 0 },
-    { label: "AI 评分 <= 52", passed: asset.ai_score <= 52 },
-    { label: "风险分 < 72", passed: asset.risk_score < 72 },
+    { label: "空头方向分 >= 55", passed: calculatedShortOpportunity >= 55 },
+    { label: "风险分 < 78", passed: asset.risk_score < 78 },
     { label: "流动性分 >= 40", passed: asset.liquidity_score >= 40 },
   ];
 
@@ -63,8 +64,10 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
         <MetricCard label="参考入场" value={asset.entry_price ? formatCurrency(asset.entry_price) : "等待"} />
         <MetricCard label="止盈" value={asset.take_profit ? formatCurrency(asset.take_profit) : "暂无"} accent="gold" />
         <MetricCard label="止损" value={asset.stop_loss ? formatCurrency(asset.stop_loss) : "暂无"} accent="coral" />
-        <MetricCard label="盈亏比" value={asset.risk_reward_ratio ? `${asset.risk_reward_ratio}:1` : "暂无"} />
+        <MetricCard label="当前计划盈亏比" value={asset.risk_reward_ratio ? `${asset.risk_reward_ratio}:1` : "暂无"} />
       </section>
+
+      <StrategyFramework asset={asset} context={strategyContext} />
 
       <section className="mt-8 rounded border border-ink/10 bg-white p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -222,6 +225,9 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
                 </div>
               ))}
               <p className="border-t border-ink/10 pt-2">
+                空头方向分 = (100 - AI) * 35% + (100 - 趋势) * 30% + 流动性 * 20% + 风险反向 * 15%，当前为 {calculatedShortOpportunity}/100。
+              </p>
+              <p>
                 若通过，触发价 = 当前价 * 0.997，表示向下跌破约 0.3% 后再确认。
               </p>
             </div>
@@ -248,9 +254,295 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
       </section>
 
       <TechnicalChart asset={asset} candles={candles} />
-      <TechnicalParameters asset={asset} candles={candles} />
     </main>
   );
+}
+
+type StrategyContext = {
+  dailyRegime: string;
+  preferredDirection: string;
+  strategyType: string;
+  volumePrice: string;
+  trendLine: string;
+  emaState: string;
+  vegasState: string;
+  dtState: string;
+  fibState: string;
+  structureState: string;
+  supportResistance: string;
+  longAllowed: boolean;
+  shortAllowed: boolean;
+  reasons: string[];
+};
+
+function StrategyFramework({ asset, context }: { asset: Asset; context: StrategyContext }) {
+  const rows = [
+    { label: "日线大趋势", value: context.dailyRegime, detail: "由 4H K线合成日线，先判断牛熊与震荡。" },
+    { label: "优先方向", value: context.preferredDirection, detail: "上升趋势优先多，下降趋势优先空，震荡区间看边界。" },
+    { label: "策略类型", value: context.strategyType, detail: "趋势单、趋势里的区间单、纯区间单分开处理。" },
+    { label: "量价关系", value: context.volumePrice, detail: "用4H K线价格变化和真实成交量序列判断放量/缩量。" },
+    { label: "趋势线", value: context.trendLine, detail: "近60根4H回归线，判断价格路径斜率。" },
+    { label: "EMA 均线", value: context.emaState, detail: "EMA50/100/200 判断价格在均线系统中的位置。" },
+    { label: "Vegas 通道", value: context.vegasState, detail: "EMA144/169 看中期通道，多空最好顺通道。" },
+    { label: "DT 指标", value: context.dtState, detail: "靠近上轨看突破或压力，靠近下轨看支撑或破位。" },
+    { label: "斐波那契", value: context.fibState, detail: "近90根高低点回撤，判断回踩/反弹关键区。" },
+    { label: "结构", value: context.structureState, detail: "双底偏多，双顶偏空，无结构则降低确定性。" },
+    { label: "支撑阻力", value: context.supportResistance, detail: "上升趋势回踩支撑可做多，下降趋势反弹阻力可做空。" },
+  ];
+
+  return (
+    <section className="mt-8 rounded border border-ink/10 bg-white p-5">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Compass size={18} />
+          <h2 className="text-lg font-semibold">多空策略框架</h2>
+        </div>
+        <span className={`rounded px-3 py-1 text-sm font-semibold ${asset.trade_signal === "做多" ? "bg-mint/15 text-mint" : asset.trade_signal === "做空" ? "bg-coral/15 text-coral" : "bg-panel text-ink/60"}`}>
+          当前系统方向：{asset.trade_signal}
+        </span>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="rounded border border-ink/10 bg-panel/60 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+            <Activity size={16} />
+            当前结论
+          </div>
+          <p className="mt-3 text-2xl font-semibold">{context.preferredDirection}</p>
+          <p className="mt-2 text-sm leading-6 text-ink/65">
+            {context.dailyRegime} · {context.strategyType}。这里展示后台 v3 指标策略当前保存的方向、结构和风控结论，和上方交易方向保持同一套口径。
+          </p>
+          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <DecisionBadge label="做多条件" passed={context.longAllowed} />
+            <DecisionBadge label="做空条件" passed={context.shortAllowed} />
+          </div>
+          <div className="mt-4 rounded bg-white p-3 text-sm leading-6 text-ink/70">
+            {context.reasons.map((reason) => (
+              <p key={reason}>• {reason}</p>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          {rows.map((row) => (
+            <div key={row.label} className="rounded border border-ink/10 p-3">
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">{row.label}</p>
+                <GitBranch size={14} className="shrink-0 text-ink/30" />
+              </div>
+              <p className="font-semibold text-ink">{row.value}</p>
+              <p className="mt-1 text-xs leading-5 text-ink/55">{row.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DecisionBadge({ label, passed }: { label: string; passed: boolean }) {
+  return (
+    <div className={`rounded border px-3 py-2 ${passed ? "border-mint/25 bg-mint/10 text-mint" : "border-ink/10 bg-white text-ink/55"}`}>
+      <p className="text-xs text-ink/45">{label}</p>
+      <p className="mt-1 font-semibold">{passed ? "允许" : "过滤"}</p>
+    </div>
+  );
+}
+
+function buildStrategyContext(asset: Asset, candles: OhlcCandle[]): StrategyContext {
+  const current = asset.current_price || candles.at(-1)?.close || 0;
+  const dailyRegime = asset.market_cycle && asset.market_cycle !== "数据不足" ? asset.market_cycle : "等待K线结构确认";
+  const preferredDirection = asset.trade_signal === "做多" ? "当前策略做多" : asset.trade_signal === "做空" ? "当前策略做空" : "当前观望";
+  const strategyType = extractStrategyType(asset.opportunity_reason) || extractStrategyType(asset.trade_rationale) || (asset.trade_signal === "观望" ? "未触发v3开仓" : "v3指标策略");
+  const support = asset.support_level;
+  const resistance = asset.resistance_level;
+  const fibText = fibLevelsText(asset);
+  const reasons = buildSavedStrategyReasons(asset);
+
+  return {
+    dailyRegime,
+    preferredDirection,
+    strategyType,
+    volumePrice: asset.volume_price_relation || "等待4H成交量序列",
+    trendLine: asset.trend_line || "趋势线数据不足",
+    emaState: emaState(current, asset.ma_50, asset.ma_100, asset.ma_200),
+    vegasState: asset.vegas_signal || vegasState(current, asset.vegas_fast, asset.vegas_slow),
+    dtState: dtState(current, asset.dt_upper, asset.dt_lower),
+    fibState: fibText,
+    structureState: extractStructureState(asset.opportunity_reason || asset.trade_rationale),
+    supportResistance: `支撑 ${support ? formatCurrency(support) : "暂无"} / 阻力 ${resistance ? formatCurrency(resistance) : "暂无"}`,
+    longAllowed: asset.trade_signal === "做多",
+    shortAllowed: asset.trade_signal === "做空",
+    reasons,
+  };
+}
+
+function extractStrategyType(text: string | null | undefined): string | null {
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/v3指标策略[:：]([^。；]+)/);
+  if (match?.[1]) {
+    return match[1].trim();
+  }
+  const fallback = text.match(/策略类型(?:为|=)([^。；，,]+)/);
+  return fallback?.[1]?.trim() || null;
+}
+
+function extractStructureState(text: string | null | undefined): string {
+  if (!text) {
+    return "等待结构确认";
+  }
+  if (text.includes("双底")) {
+    return "双底结构，偏多确认";
+  }
+  if (text.includes("双顶")) {
+    return "双顶结构，偏空确认";
+  }
+  if (text.includes("靠近支撑")) {
+    return "靠近支撑区域";
+  }
+  if (text.includes("靠近阻力")) {
+    return "靠近阻力区域";
+  }
+  return "暂无明确双底/双顶";
+}
+
+function fibLevelsText(asset: Asset): string {
+  const levels = [asset.fib_382, asset.fib_500, asset.fib_618].filter((value): value is number => Boolean(value));
+  if (!levels.length) {
+    return "Fib数据不足";
+  }
+  return `Fib 38.2/50/61.8：${levels.map((level) => formatCurrency(level)).join(" / ")}`;
+}
+
+function buildSavedStrategyReasons(asset: Asset): string[] {
+  const source = asset.opportunity_reason || asset.trade_rationale;
+  if (!source) {
+    return ["等待 v3 指标策略刷新。"];
+  }
+  const cleaned = source.replace(/^v3指标策略[:：][^。]*。?/, "");
+  const items = cleaned.split(/[；。]/).map((item) => item.trim()).filter(Boolean);
+  if (items.length) {
+    return items.slice(0, 5);
+  }
+  return [source];
+}
+
+function emaValue(values: number[], period: number): number | null {
+  if (values.length < period) {
+    return null;
+  }
+  const multiplier = 2 / (period + 1);
+  let value = values.slice(0, period).reduce((sum, item) => sum + item, 0) / period;
+  for (const price of values.slice(period)) {
+    value = price * multiplier + value * (1 - multiplier);
+  }
+  return value;
+}
+
+function nearLevel(price: number, level: number | null | undefined, tolerance: number) {
+  return Boolean(level && price > 0 && Math.abs(price - level) / price <= tolerance);
+}
+
+function emaState(price: number, ema50: number | null, ema100: number | null, ema200: number | null): string {
+  if (!ema50 || !ema100) {
+    return "EMA数据不足";
+  }
+  if (price > ema50 && ema50 > ema100 && (!ema200 || ema100 > ema200)) {
+    return "多头排列，价格在均线上方";
+  }
+  if (price < ema50 && ema50 < ema100 && (!ema200 || ema100 < ema200)) {
+    return "空头排列，价格在均线下方";
+  }
+  return "均线缠绕，趋势不够干净";
+}
+
+function vegasState(price: number, ema144: number | null, ema169: number | null): string {
+  if (!ema144 || !ema169) {
+    return "Vegas数据不足";
+  }
+  const upper = Math.max(ema144, ema169);
+  const lower = Math.min(ema144, ema169);
+  if (price > upper) {
+    return "价格在Vegas通道上方，偏多";
+  }
+  if (price < lower) {
+    return "价格在Vegas通道下方，偏空";
+  }
+  return "价格在Vegas通道内，等待方向";
+}
+
+function dtState(price: number, upper: number | null, lower: number | null): string {
+  if (!upper || !lower) {
+    return "DT数据不足";
+  }
+  if (price >= upper) {
+    return "价格接近或突破DT上轨";
+  }
+  if (price <= lower) {
+    return "价格接近或跌破DT下轨";
+  }
+  return "价格在DT通道内部";
+}
+
+function fibState(price: number, high: number | null, low: number | null): string {
+  if (!high || !low || high <= low) {
+    return "Fib数据不足";
+  }
+  const range = high - low;
+  const supports = [high - range * 0.382, high - range * 0.5, high - range * 0.618];
+  const resistances = [low + range * 0.382, low + range * 0.5, low + range * 0.618];
+  if (supports.some((level) => nearLevel(price, level, 0.03))) {
+    return "靠近Fib回撤支撑区";
+  }
+  if (resistances.some((level) => nearLevel(price, level, 0.03))) {
+    return "靠近Fib反弹压力区";
+  }
+  return "不在核心Fib区域";
+}
+
+function volumePriceState(change24h: number, volumeToCap: number): string {
+  const active = volumeToCap >= 0.08;
+  if (change24h > 0 && active) {
+    return "放量上涨，偏多确认";
+  }
+  if (change24h < 0 && active) {
+    return "放量下跌，偏空确认";
+  }
+  if (change24h > 0) {
+    return "缩量上涨，追多谨慎";
+  }
+  if (change24h < 0) {
+    return "缩量下跌，追空谨慎";
+  }
+  return "量价中性";
+}
+
+function hasDoubleBottom(candles: OhlcCandle[]): boolean {
+  if (candles.length < 20) {
+    return false;
+  }
+  const lows = candles.map((candle) => candle.low);
+  const closes = candles.map((candle) => candle.close);
+  const firstLow = Math.min(...lows.slice(0, -8));
+  const firstIndex = lows.indexOf(firstLow);
+  const secondLow = Math.min(...lows.slice(firstIndex + 5));
+  const neckline = Math.max(...closes.slice(firstIndex, Math.max(firstIndex + 6, candles.length - 3)));
+  return Math.abs(secondLow - firstLow) / Math.max(firstLow, 0.00000001) <= 0.035 && closes.at(-1)! > neckline;
+}
+
+function hasDoubleTop(candles: OhlcCandle[]): boolean {
+  if (candles.length < 20) {
+    return false;
+  }
+  const highs = candles.map((candle) => candle.high);
+  const closes = candles.map((candle) => candle.close);
+  const firstHigh = Math.max(...highs.slice(0, -8));
+  const firstIndex = highs.indexOf(firstHigh);
+  const secondHigh = Math.max(...highs.slice(firstIndex + 5));
+  const neckline = Math.min(...closes.slice(firstIndex, Math.max(firstIndex + 6, candles.length - 3)));
+  return Math.abs(secondHigh - firstHigh) / Math.max(firstHigh, 0.00000001) <= 0.035 && closes.at(-1)! < neckline;
 }
 
 function clampScore(value: number): number {

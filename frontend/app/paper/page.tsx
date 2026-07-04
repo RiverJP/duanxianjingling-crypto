@@ -24,7 +24,7 @@ export default async function PaperTradingPage() {
           <p className="text-sm font-medium uppercase tracking-wide text-ink/50">模拟观察</p>
           <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">10000U 模拟仓位验证</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/60">
-            机会分达到 {summary.min_opportunity_score} 且方向为做多/做空时默认开模拟单。每单保证金 {formatCurrency(summary.margin_per_trade)}，{summary.leverage} 倍杠杆，名义仓位 {formatCurrency(summary.margin_per_trade * summary.leverage)}。
+            模拟开仓按 v3 指标策略执行：先更新 15m/1H/4H K 线，再用 1H/4H 方向过滤、日线结构和计划盈亏比筛选。机会分达到 {summary.min_opportunity_score} 且计划盈亏比 &gt;= 1:1 时才开模拟单。每单保证金 {formatCurrency(summary.margin_per_trade)}，{summary.leverage} 倍杠杆。
           </p>
         </section>
 
@@ -135,9 +135,9 @@ export default async function PaperTradingPage() {
           <div className="rounded border border-ink/10 bg-white p-5">
             <h2 className="mb-4 text-lg font-semibold">规则说明</h2>
             <div className="space-y-3 text-sm leading-6 text-ink/70">
-              <p>开单条件：机会分达到 {summary.min_opportunity_score}，交易方向不是观望，并且系统已经给出止盈止损。</p>
+              <p>开单条件：v3 指标策略触发做多/做空，机会分达到 {summary.min_opportunity_score}，计划盈亏比 &gt;= 1:1，并且系统已经给出止盈止损。</p>
               <p>开单资金：模拟账户 {formatCurrency(summary.account_balance)}，每次使用 {formatCurrency(summary.margin_per_trade)} 保证金，{summary.leverage} 倍杠杆。</p>
-              <p>平仓条件：刷新时如果价格触达止盈或止损，则按当前刷新价格模拟平仓。</p>
+              <p>平仓条件：刷新时如果价格触达止盈或止损，则按当前刷新价格模拟平仓；15m 单最长持仓 7 天，到期仍未触发则到期平仓。</p>
               <p>用途：这个页面用于观察评分策略效果，不连接真实交易所，也不会真实下单。</p>
             </div>
             <div className="mt-5">

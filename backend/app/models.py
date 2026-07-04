@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Float, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -96,4 +96,45 @@ class PaperDailySnapshot(Base):
     open_trades: Mapped[int] = mapped_column(Integer, default=0)
     closed_trades: Mapped[int] = mapped_column(Integer, default=0)
     win_rate: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class OhlcCandle(Base):
+    __tablename__ = "ohlc_candles"
+    __table_args__ = (UniqueConstraint("symbol", "interval", "time", name="uq_ohlc_symbol_interval_time"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    coingecko_id: Mapped[str] = mapped_column(String(64), index=True)
+    interval: Mapped[str] = mapped_column(String(8), index=True)
+    time: Mapped[int] = mapped_column(BigInteger, index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float, default=0)
+    source: Mapped[str] = mapped_column(String(32), default="external")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class BacktestRun(Base):
+    __tablename__ = "backtest_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    run_key: Mapped[str] = mapped_column(String(48), unique=True, index=True)
+    strategy_mode: Mapped[str] = mapped_column(String(24), index=True)
+    strategy_version: Mapped[str] = mapped_column(String(48), index=True)
+    days: Mapped[int] = mapped_column(Integer, index=True)
+    execution_interval: Mapped[str] = mapped_column(String(8), index=True)
+    trend_interval: Mapped[str] = mapped_column(String(16), index=True)
+    tested_assets: Mapped[int] = mapped_column(Integer, default=0)
+    total_trades: Mapped[int] = mapped_column(Integer, default=0)
+    total_pnl: Mapped[float] = mapped_column(Float, default=0)
+    win_rate: Mapped[float] = mapped_column(Float, default=0)
+    parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    rules_json: Mapped[str] = mapped_column(Text, default="{}")
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    equity_curve_json: Mapped[str] = mapped_column(Text, default="[]")
+    assets_json: Mapped[str] = mapped_column(Text, default="[]")
+    trades_json: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

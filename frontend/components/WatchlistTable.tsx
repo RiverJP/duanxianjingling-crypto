@@ -33,7 +33,7 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <MobileStat label="机会分" value={`${asset.opportunity_score}/100`} strong />
-              <MobileStat label="盈亏比" value={formatRiskReward(asset.risk_reward_ratio)} strong tone={asset.risk_reward_ratio && asset.risk_reward_ratio >= 1.5 ? "mint" : "ink"} />
+              <MobileStat label="v3计划盈亏比" value={formatRiskReward(asset.risk_reward_ratio)} strong tone={asset.risk_reward_ratio && asset.risk_reward_ratio >= 1 ? "mint" : "ink"} />
               <MobileStat label="价格" value={formatCurrency(asset.current_price)} />
               <MobileStat label="24小时" value={formatPercent(asset.change_24h)} tone={asset.change_24h >= 0 ? "mint" : "coral"} />
               <MobileStat label="成交量" value={formatCompactCurrency(asset.volume_24h)} />
@@ -55,13 +55,13 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
       </div>
 
       <div className="hidden overflow-hidden rounded border border-ink/10 bg-white md:block">
-        <table className="w-full min-w-[1260px] text-left text-sm">
+        <table className="w-full min-w-[1320px] text-left text-sm">
         <thead className="bg-panel text-xs uppercase tracking-wide text-ink/55">
           <tr>
             <th className="px-4 py-3">资产</th>
-            <th className="px-4 py-3">机会</th>
+            <th className="px-4 py-3">v3机会</th>
             <th className="px-4 py-3">机会分</th>
-            <th className="px-4 py-3">盈亏比</th>
+            <th className="px-4 py-3">v3计划盈亏比</th>
             <th className="px-4 py-3">价格</th>
             <th className="px-4 py-3">24 小时</th>
             <th className="px-4 py-3">方向</th>
@@ -102,7 +102,7 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
                 <span className="font-semibold">{asset.opportunity_score}</span>
                 <span className="text-ink/40">/100</span>
               </td>
-              <td className={`px-4 py-4 tabular-nums ${asset.risk_reward_ratio && asset.risk_reward_ratio >= 1.5 ? "font-semibold text-mint" : "text-ink/60"}`}>
+              <td className={`px-4 py-4 tabular-nums ${asset.risk_reward_ratio && asset.risk_reward_ratio >= 1 ? "font-semibold text-mint" : "text-ink/60"}`}>
                 {formatRiskReward(asset.risk_reward_ratio)}
               </td>
               <td className="px-4 py-4 tabular-nums">{formatCurrency(asset.current_price)}</td>

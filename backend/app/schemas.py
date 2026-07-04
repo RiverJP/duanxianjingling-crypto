@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AssetOut(BaseModel):
@@ -115,3 +115,121 @@ class EquityCurvePointOut(BaseModel):
     date: str
     equity: float
     pnl: float
+
+
+class BacktestSummaryOut(BaseModel):
+    run_id: int | None = None
+    run_key: str | None = None
+    strategy_mode: str | None = None
+    strategy_version: str | None = None
+    generated_at: str | None = None
+    days: int
+    execution_interval: str
+    trend_interval: str
+    tested_assets: int
+    traded_assets: int
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    win_rate: float
+    total_pnl: float
+    total_pnl_percent: float
+    average_pnl: float
+    fee_rate: float = 0
+    total_fees: float = 0
+    net_pnl: float = 0
+    net_pnl_percent: float = 0
+    average_net_pnl: float = 0
+    net_win_rate: float = 0
+    best_trade: float
+    worst_trade: float
+    excluded_period_end_trades: int = 0
+    excluded_low_risk_reward_trades: int = 0
+
+
+class BacktestTradeOut(BaseModel):
+    symbol: str
+    name: str
+    side: str
+    entry_price: float
+    current_price: float
+    exit_price: float | None
+    stop_loss: float | None
+    take_profit: float | None
+    risk_reward_ratio: float | None = None
+    margin_usdt: float
+    leverage: int
+    notional_usdt: float
+    opportunity_score: int
+    execution_interval: str
+    strategy_type: str | None = None
+    market_regime: str | None = None
+    entry_reasons: list[str] = Field(default_factory=list)
+    indicator_snapshot: dict = Field(default_factory=dict)
+    opening_logic: str | None = None
+    pnl_usdt: float
+    pnl_percent: float
+    opened_at: str
+    closed_at: str | None
+    close_reason: str | None
+
+
+class BacktestAssetOut(BaseModel):
+    symbol: str
+    name: str
+    market_cap: float
+    candle_count: int
+    best_opportunity_score: int
+    best_signal: str
+    total_trades: int
+    winning_trades: int
+    losing_trades: int
+    total_pnl: float
+    status: str
+    execution_interval: str
+
+
+class BacktestResultOut(BaseModel):
+    summary: BacktestSummaryOut
+    rules: dict
+    equity_curve: list[EquityCurvePointOut]
+    trades: list[BacktestTradeOut]
+    assets: list[BacktestAssetOut]
+
+
+class BacktestRunOut(BaseModel):
+    id: int
+    run_key: str
+    strategy_mode: str
+    strategy_version: str
+    days: int
+    execution_interval: str
+    trend_interval: str
+    tested_assets: int
+    total_trades: int
+    total_pnl: float
+    win_rate: float
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class BacktestComparisonOut(BaseModel):
+    days: int
+    label: str
+    source_run_key: str | None
+    source_days: int | None
+    derived: bool
+    summary: BacktestSummaryOut | None
+
+
+class BacktestTradesPageOut(BaseModel):
+    days: int
+    interval: str
+    mode: str
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    filter_options: dict[str, list[str]]
+    trades: list[BacktestTradeOut]
