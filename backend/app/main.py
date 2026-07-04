@@ -181,8 +181,9 @@ def ensure_trade_plan_columns() -> None:
         "ALTER TABLE asset_snapshots ADD COLUMN IF NOT EXISTS ma_200 DOUBLE PRECISION",
         "ALTER TABLE asset_snapshots ADD COLUMN IF NOT EXISTS technical_note TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE asset_snapshots ALTER COLUMN coingecko_id TYPE VARCHAR(64)",
-        "ALTER TABLE asset_snapshots ALTER COLUMN symbol TYPE VARCHAR(16)",
+        "ALTER TABLE asset_snapshots ALTER COLUMN symbol TYPE VARCHAR(32)",
         "ALTER TABLE asset_snapshots ALTER COLUMN name TYPE VARCHAR(96)",
+        "ALTER TABLE paper_trades ALTER COLUMN symbol TYPE VARCHAR(32)",
     ]
     with engine.begin() as connection:
         for statement in statements:
@@ -192,6 +193,7 @@ def ensure_trade_plan_columns() -> None:
 def ensure_ohlc_candle_columns() -> None:
     statements = [
         "ALTER TABLE ohlc_candles ALTER COLUMN time TYPE BIGINT",
+        "ALTER TABLE ohlc_candles ALTER COLUMN symbol TYPE VARCHAR(32)",
         "ALTER TABLE ohlc_candles ADD COLUMN IF NOT EXISTS volume DOUBLE PRECISION NOT NULL DEFAULT 0",
         "DELETE FROM ohlc_candles WHERE time > 10000000000",
     ]

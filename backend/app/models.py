@@ -11,7 +11,7 @@ class AssetSnapshot(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     coingecko_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    symbol: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(96))
     image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     current_price: Mapped[float] = mapped_column(Float, default=0)
@@ -63,7 +63,7 @@ class PaperTrade(Base):
     __tablename__ = "paper_trades"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str] = mapped_column(String(96))
     side: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(16), default="open", index=True)
@@ -104,7 +104,7 @@ class OhlcCandle(Base):
     __table_args__ = (UniqueConstraint("symbol", "interval", "time", name="uq_ohlc_symbol_interval_time"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
     coingecko_id: Mapped[str] = mapped_column(String(64), index=True)
     interval: Mapped[str] = mapped_column(String(8), index=True)
     time: Mapped[int] = mapped_column(BigInteger, index=True)
