@@ -5,13 +5,13 @@ from datetime import date, datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from app.backtesting import derive_backtest_period_result, derive_backtest_period_summary, run_month_backtest
 from app.config import get_settings
 from app.database import Base, SessionLocal, engine, get_db
-from app.models import AssetSnapshot, BacktestRun, PaperTrade
+from app.models import AssetSnapshot, BacktestRun, PaperDailySnapshot, PaperTrade
 from app.paper_trading import apply_paper_trading, build_equity_curve, build_paper_trading_summary, record_daily_snapshot
 from app.schemas import AssetOut, BacktestComparisonOut, BacktestResultOut, BacktestRunOut, BacktestTradesPageOut, EquityCurvePointOut, OhlcCandleOut, PaperTradeOut, PaperTradingSummaryOut, RefreshOut
 from app.services import (
@@ -494,6 +494,44 @@ def paper_trading_run(db: Session = Depends(get_db)) -> dict:
     assets = list(db.scalars(select(AssetSnapshot).order_by(AssetSnapshot.opportunity_score.desc())))
     apply_paper_trading(db, assets)
     return build_paper_trading_summary(db)
+
+
+@app.post("/paper-trading/reset")
+async def paper_trading_reset(
+    reopen: bool = True,
+    refresh_first: bool = True,
+    db: Session = Depends(get_db),
+    x_refresh_token: str | None = Header(default=None),
+) -> dict:
+    verify_refresh_token(x_refresh_token)
+    removed_trades = len(list(db.scalars(select(PaperTrade.id))))
+    removed_snapshots = len(list(db.scalars(select(PaperDailySnapshot.id))))
+    db.execute(delete(PaperTrade))
+    db.execute(delete(PaperDailySnapshot))
+    db.commit()
+
+    refreshed_assets = []
+    if reopen:
+        if refresh_first:
+            refreshed_assets = await refresh_candidate_assets(db)
+        else:
+            refreshed_assets = list(
+                db.scalars(
+                    select(AssetSnapshot)
+                    .where(universe_asset_where_clause())
+                    .order_by(AssetSnapshot.opportunity_score.desc())
+                )
+            )
+        apply_paper_trading(db, refreshed_assets, open_new=True)
+
+    return {
+        "reset": True,
+        "removed_trades": removed_trades,
+        "removed_daily_snapshots": removed_snapshots,
+        "reopened": reopen,
+        "refreshed_assets": len(refreshed_assets),
+        "summary": build_paper_trading_summary(db),
+    }
 
 
 @app.get("/backtest/month", response_model=BacktestResultOut)
