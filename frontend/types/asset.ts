@@ -151,6 +151,8 @@ export type BacktestSummary = {
   worst_trade: number;
   excluded_period_end_trades: number;
   excluded_low_risk_reward_trades: number;
+  excluded_portfolio_trades: number;
+  max_concurrent_trades: number;
 };
 
 export type BacktestRules = {

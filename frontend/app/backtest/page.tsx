@@ -25,10 +25,10 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
   const requestedInterval = normalizeInterval(params?.interval);
   const requestedVersion = normalizeVersion(params?.version);
   const recentRuns = await getBacktestRuns(20);
-  const v3RecentRuns = recentRuns.filter(isV3Run);
+  const v4RecentRuns = recentRuns.filter(isV4Run);
   const result = await getSavedBacktestResult(requestedDays ?? 30, requestedInterval, "indicator", 0, requestedVersion).catch(() => null);
   if (!result) {
-    return <BacktestMissingPage days={requestedDays ?? 30} interval={requestedInterval} version={requestedVersion} recentRuns={v3RecentRuns} />;
+    return <BacktestMissingPage days={requestedDays ?? 30} interval={requestedInterval} version={requestedVersion} recentRuns={v4RecentRuns} />;
   }
   const { summary, rules, assets, equity_curve: equityCurve } = result;
   const isFallback = !requestedDays && summary.days !== 30;
@@ -62,14 +62,14 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           ) : null}
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
-            <span className="font-semibold text-ink">v3</span>
-            <span className="text-xs text-ink/45">2026-07-04v3</span>
+            <span className="font-semibold text-ink">v4</span>
+            <span className="text-xs text-ink/45">2026-07-04v4-strict</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
               <Link
                 key={period.days}
-                href={`/backtest?days=${period.days}&interval=${summary.execution_interval}&version=v3`}
+                href={`/backtest?days=${period.days}&interval=${summary.execution_interval}&version=v4`}
                 className={`rounded border px-3 py-2 text-sm font-medium ${
                   summary.days === period.days ? "border-mint bg-mint/15 text-mint" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
                 }`}
@@ -82,7 +82,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
             {INTERVALS.map((item) => (
               <Link
                 key={item.interval}
-                href={`/backtest?days=${summary.days}&interval=${item.interval}&version=v3`}
+                href={`/backtest?days=${summary.days}&interval=${item.interval}&version=v4`}
                 className={`rounded border px-3 py-2 text-sm font-medium ${
                   summary.execution_interval === item.interval ? "border-gold bg-gold/15 text-ink" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
                 }`}
@@ -127,6 +127,11 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
                   已排除 {summary.excluded_low_risk_reward_trades} 笔计划盈亏比低于 1:1 的交易。
                 </p>
               ) : null}
+              {summary.excluded_portfolio_trades > 0 ? (
+                <p className="mt-2 text-xs leading-5 text-ink/55">
+                  已按组合保证金上限跳过 {summary.excluded_portfolio_trades} 笔信号；本次最多同时持仓 {summary.max_concurrent_trades} 笔。
+                </p>
+              ) : null}
             </div>
             <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
               <BacktestStat label="总交易" value={`${summary.total_trades} 笔`} />
@@ -142,6 +147,8 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
               <BacktestStat label="触发标的数" value={`${summary.traded_assets} 个`} />
               <BacktestStat label="排除期末" value={`${summary.excluded_period_end_trades} 笔`} />
               <BacktestStat label="排除低盈亏比" value={`${summary.excluded_low_risk_reward_trades} 笔`} />
+              <BacktestStat label="保证金过滤" value={`${summary.excluded_portfolio_trades} 笔`} />
+              <BacktestStat label="最大同时持仓" value={`${summary.max_concurrent_trades} 笔`} />
             </div>
           </div>
         </section>
@@ -395,11 +402,11 @@ function normalizeInterval(value?: string): string {
 }
 
 function normalizeVersion(_value?: string): string {
-  return "v3";
+  return "v4";
 }
 
-function isV3Run(run: BacktestRun): boolean {
-  return run.strategy_version === "v3" || run.strategy_version === "2026-07-04v3";
+function isV4Run(run: BacktestRun): boolean {
+  return run.strategy_version === "v4" || run.strategy_version === "2026-07-04v4-strict";
 }
 
 function formatInterval(value: string): string {

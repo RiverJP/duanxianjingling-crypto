@@ -27,7 +27,7 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v3"
+BACKTEST_STRATEGY_VERSION = "2026-07-04v4-strict"
 MIN_BACKTEST_RISK_REWARD_RATIO = 1.0
 MAX_STRUCTURE_STOP_DISTANCE_RATIO = 0.05
 BACKTEST_FEE_RATE = 0.0012
@@ -149,9 +149,13 @@ async def run_month_backtest(
             )
 
     trades.sort(key=lambda trade: trade["opened_at"])
-    period_closed_trades = exclude_period_end_trades(trades)
+    portfolio_trades, excluded_portfolio_trades, max_concurrent_trades = apply_portfolio_margin_limit(
+        trades,
+        settings.paper_account_balance,
+    )
+    period_closed_trades = exclude_period_end_trades(portfolio_trades)
     report_trades = exclude_low_risk_reward_trades(period_closed_trades)
-    excluded_period_end_trades = len(trades) - len(period_closed_trades)
+    excluded_period_end_trades = len(portfolio_trades) - len(period_closed_trades)
     excluded_low_risk_reward_trades = len(period_closed_trades) - len(report_trades)
     trend_interval = "1h+4h" if execution_interval == "15m" else "4h"
     summary = build_backtest_summary(
@@ -163,6 +167,8 @@ async def run_month_backtest(
         trend_interval,
         excluded_period_end_trades=excluded_period_end_trades,
         excluded_low_risk_reward_trades=excluded_low_risk_reward_trades,
+        excluded_portfolio_trades=excluded_portfolio_trades,
+        max_concurrent_trades=max_concurrent_trades,
     )
     rules = build_backtest_rules(strategy_mode, execution_interval, trend_interval, settings.paper_min_opportunity_score)
     result = {
@@ -170,7 +176,7 @@ async def run_month_backtest(
         "rules": rules,
         "equity_curve": build_backtest_equity_curve(report_trades, settings.paper_account_balance, capped_days),
         "trades": sorted(report_trades, key=lambda trade: trade["opened_at"], reverse=True),
-        "all_trades": sorted(trades, key=lambda trade: trade["opened_at"], reverse=True),
+        "all_trades": sorted(portfolio_trades, key=lambda trade: trade["opened_at"], reverse=True),
         "assets": build_report_asset_results(asset_results, report_trades, execution_interval),
     }
     saved_run = save_backtest_run(
@@ -185,6 +191,7 @@ async def run_month_backtest(
             "min_quality_score": settings.paper_min_opportunity_score,
             "margin_per_trade": settings.paper_margin_per_trade,
             "leverage": settings.paper_leverage,
+            "max_used_margin": settings.paper_account_balance,
         },
     )
     result["summary"]["run_id"] = saved_run.id
@@ -199,7 +206,7 @@ async def run_month_backtest(
                 "total_assets": len(assets),
                 "completed_assets": len(assets),
                 "current_asset": None,
-                "total_trades": len(trades),
+                "total_trades": len(portfolio_trades),
                 "run_key": saved_run.run_key,
             }
         )
@@ -255,7 +262,8 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
         "timeframes": [
             f"执行周期：{execution_interval}",
             f"方向过滤：{trend_interval}",
-            "日线由 4H K 线聚合，用于判断大级别趋势和关键结构。",
+            "日线由 4H K 线聚合，但只使用信号时刻之前已经完整收盘的日线。",
+            "15m 信号在当前 K 线收盘后生成，下一根 15m K 线开盘价成交。",
         ],
         "entry_conditions": [
             f"指标质量分必须 >= {min_quality_score}。",
@@ -296,7 +304,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "回测结束仍未触发止盈止损的单会标记为期末平仓，但默认不纳入胜率、盈亏和资金曲线统计。",
         ],
         "indicator_analysis": [
-            "策略名称：2026-07-04v2。核心思路是先用日线和4H判断大环境，再用1H过滤方向，最后用15m执行开仓。",
+            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是先用已收盘日线和4H判断大环境，再用已收盘1H过滤方向，最后用15m收盘信号、下一根15m开盘执行。",
             "EMA：20/50 用于执行和观察周期方向；50/100 用于日线趋势判定；144/169 作为 Vegas 通道中轴。",
             "Vegas：价格在 EMA144/EMA169 通道上方偏多，在下方偏空。",
             "DT：近 20 根 K 线高低点作为突破通道，上破偏多，下破偏空。",
@@ -309,7 +317,8 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
         "risk_notes": [
             f"手续费按每笔名义仓位 {BACKTEST_FEE_RATE * 100:.2f}% 估算，汇总会同时展示扣费前和扣费后结果。",
             "当前回测未计入滑点和盘口深度冲击。",
-            "当前回测为单标的逐笔闭环，不模拟多个标的同时占用保证金的冲突。",
+            "当前回测会按模拟账户本金限制同时持仓保证金占用，保证金不足的信号会被跳过。",
+            "当前标的池仍使用回测启动时的币安合约成交量前 150，尚未还原历史每一天的成分股变化。",
             "结果只用于验证策略逻辑，不代表实盘收益。",
         ],
     }
@@ -384,15 +393,19 @@ def backtest_asset(
     trend_filter_rows = trend_filters or {"4h": trend_rows}
     daily_rows = daily_candles or resample_candles(trend_rows, 86400)
 
-    for index in range(lookback_candles, len(rows)):
+    execution_seconds = interval_seconds(execution_interval)
+
+    for index in range(lookback_candles, len(rows) - 1):
         candle = rows[index]
+        next_candle = rows[index + 1]
         close = float(candle["close"])
         high = float(candle["high"])
         low = float(candle["low"])
-        opened_time = int(candle["time"])
+        candle_time = int(candle["time"])
+        signal_time = candle_time + execution_seconds
 
         if open_trade:
-            closed = maybe_close_trade(open_trade, high, low, close, opened_time)
+            closed = maybe_close_trade(open_trade, high, low, close, signal_time)
             if closed:
                 trades.append(closed)
                 open_trade = None
@@ -420,13 +433,13 @@ def backtest_asset(
             scores["risk_score"],
         )
         trend_signals = {
-            label: build_trend_signal(filter_rows, opened_time, asset, label)
+            label: build_trend_signal(filter_rows, signal_time, asset, label)
             for label, filter_rows in trend_filter_rows.items()
         }
-        market_context = build_daily_market_context(daily_rows, opened_time, close)
+        market_context = build_daily_market_context(daily_rows, signal_time, close)
 
         if strategy_mode == "indicator":
-            plan = build_indicator_trade_plan(asset, rows, index, close, opened_time, trend_filter_rows, market_context)
+            plan = build_indicator_trade_plan(asset, rows, index, close, signal_time, trend_filter_rows, market_context)
             if plan is None:
                 continue
             opportunity_score = int(plan["opportunity_score"])
@@ -454,28 +467,46 @@ def backtest_asset(
             continue
         if not plan["take_profit"] or not plan["stop_loss"]:
             continue
+        entry_price = float(next_candle["open"])
+        entry_time = int(next_candle["time"])
+        stop_loss = float(plan["stop_loss"])
+        take_profit = float(plan["take_profit"])
+        if not is_valid_delayed_entry(str(plan["trade_signal"]), entry_price, stop_loss, take_profit):
+            continue
+        delayed_risk_reward_ratio = calculate_plan_risk_reward(entry_price, stop_loss, take_profit)
+        if delayed_risk_reward_ratio < MIN_BACKTEST_RISK_REWARD_RATIO:
+            continue
 
-        opening_logic = str(plan.get("opening_logic") or build_trade_opening_logic(
+        entry_reasons = list(plan.get("entry_reasons") or [])
+        entry_reasons.append("v4严格回测：信号K线收盘后确认，下一根15m K线开盘价成交")
+        indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
+        indicator_snapshot["signal_price"] = round_price(close)
+        indicator_snapshot["entry_price"] = round_price(entry_price)
+        indicator_snapshot["risk_reward_ratio"] = delayed_risk_reward_ratio
+        indicator_snapshot["execution_detail"] = "信号K线收盘后确认，下一根15m K线开盘价成交；1H/4H/日线只读取已完整收盘K线。"
+
+        opening_logic = build_trade_opening_logic(
             asset.symbol,
             str(plan["trade_signal"]),
             strategy_type,
             opportunity_score,
-            close,
-            float(plan["stop_loss"]),
-            float(plan["take_profit"]),
+            entry_price,
+            stop_loss,
+            take_profit,
             market_context,
-            {},
-        ))
+            indicator_snapshot,
+            entry_reasons,
+        )
         open_trade = {
             "symbol": asset.symbol,
             "name": asset.name,
             "side": plan["trade_signal"],
-            "entry_price": close,
-            "current_price": close,
+            "entry_price": entry_price,
+            "current_price": entry_price,
             "exit_price": None,
-            "stop_loss": float(plan["stop_loss"]),
-            "take_profit": float(plan["take_profit"]),
-            "risk_reward_ratio": plan.get("risk_reward_ratio"),
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk_reward_ratio": delayed_risk_reward_ratio,
             "margin_usdt": margin_per_trade,
             "leverage": leverage,
             "notional_usdt": notional,
@@ -483,12 +514,14 @@ def backtest_asset(
             "execution_interval": execution_interval,
             "strategy_type": strategy_type,
             "market_regime": market_context["regime"],
-            "entry_reasons": plan.get("entry_reasons") or [],
-            "indicator_snapshot": plan.get("indicator_snapshot") or {},
+            "entry_reasons": entry_reasons,
+            "indicator_snapshot": indicator_snapshot,
             "opening_logic": opening_logic,
-            "opened_timestamp": opened_time,
+            "signal_timestamp": signal_time,
+            "opened_timestamp": entry_time,
             "max_holding_seconds": max_holding_seconds,
-            "opened_at": iso_from_timestamp(opened_time),
+            "signal_at": iso_from_timestamp(signal_time),
+            "opened_at": iso_from_timestamp(entry_time),
             "closed_at": None,
             "close_reason": None,
             "pnl_usdt": 0.0,
@@ -497,7 +530,14 @@ def backtest_asset(
 
     if open_trade:
         last = rows[-1]
-        trades.append(close_trade(open_trade, float(last["close"]), int(last["time"]), "期末平仓"))
+        closed = maybe_close_trade(
+            open_trade,
+            float(last["high"]),
+            float(last["low"]),
+            float(last["close"]),
+            int(last["time"]) + execution_seconds,
+        )
+        trades.append(closed or close_trade(open_trade, float(last["close"]), int(last["time"]) + execution_seconds, "期末平仓"))
 
     status = "触发交易"
     if not trades:
@@ -513,6 +553,38 @@ def backtest_max_holding_seconds(execution_interval: str) -> int:
     if execution_interval in {"15m", "1h"}:
         return 7 * 24 * 3600
     return 21 * 24 * 3600
+
+
+def interval_seconds(interval: str) -> int:
+    return {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}.get(interval, 3600)
+
+
+def completed_candles(rows: list[dict[str, float | int]], timestamp: int, interval: str) -> list[dict[str, float | int]]:
+    seconds = interval_seconds(interval)
+    return [row for row in rows if int(row["time"]) + seconds <= timestamp]
+
+
+def infer_candle_interval(rows: list[dict[str, float | int]]) -> str:
+    if len(rows) < 2:
+        return "4h"
+    delta = max(1, int(rows[-1]["time"]) - int(rows[-2]["time"]))
+    if delta <= 900:
+        return "15m"
+    if delta <= 3600:
+        return "1h"
+    if delta <= 14400:
+        return "4h"
+    return "1d"
+
+
+def is_valid_delayed_entry(side: str, entry_price: float, stop_loss: float, take_profit: float) -> bool:
+    if entry_price <= 0 or stop_loss <= 0 or take_profit <= 0:
+        return False
+    if side == "做多":
+        return stop_loss < entry_price < take_profit
+    if side == "做空":
+        return take_profit < entry_price < stop_loss
+    return False
 
 
 def build_indicator_trade_plan(
@@ -731,7 +803,7 @@ def build_indicator_snapshot(
         "support_resistance_detail": f"日线支撑={format_optional_level(support)}，日线阻力={format_optional_level(resistance)}；靠近支撑={format_bool(market_context.get('near_support'))}，靠近阻力={format_bool(market_context.get('near_resistance'))}。",
         "structure_detail": f"双底={format_bool(market_context.get('double_bottom'))}，双顶={format_bool(market_context.get('double_top'))}。",
         "volume_filter_detail": f"24h成交额/市值={volume_to_cap * 100:.2f}%，最低要求>=1.50%。",
-        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v2将15m最长持仓延长到7天，到期未触发止盈止损则按收盘价到期平仓。",
+        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v4严格口径会在信号K线收盘后，以下一根15m开盘价成交。",
         "entry_reason_detail": "；".join(entry_reasons),
     }
 
@@ -778,7 +850,7 @@ def build_trade_opening_logic(
 
 
 def indicator_trend_direction(trend_rows: list[dict[str, float | int]], timestamp: int) -> str:
-    available_rows = [row for row in trend_rows if int(row["time"]) <= timestamp]
+    available_rows = completed_candles(trend_rows, timestamp, infer_candle_interval(trend_rows))
     if len(available_rows) < TREND_LOOKBACK_CANDLES:
         return "观望"
 
@@ -854,7 +926,7 @@ def directional_opportunity_score(signal: str, ai_score: int, trend_score: int, 
 
 
 def build_trend_signal(trend_rows: list[dict[str, float | int]], timestamp: int, asset: AssetSnapshot, interval: str = "4h") -> str:
-    available_rows = [row for row in trend_rows if int(row["time"]) <= timestamp]
+    available_rows = completed_candles(trend_rows, timestamp, interval)
     lookback = TREND_LOOKBACK_CANDLES
     if len(available_rows) <= lookback:
         return "观望"
@@ -878,7 +950,7 @@ def build_trend_signal(trend_rows: list[dict[str, float | int]], timestamp: int,
 
 
 def build_daily_market_context(daily_rows: list[dict[str, float | int]], timestamp: int, execution_price: float) -> dict:
-    available_rows = [row for row in daily_rows if int(row["time"]) <= timestamp]
+    available_rows = completed_candles(daily_rows, timestamp, "1d")
     if len(available_rows) < TREND_LOOKBACK_CANDLES:
         return {
             "regime": "数据不足",
@@ -1137,11 +1209,57 @@ def close_trade(trade: dict, exit_price: float, timestamp: int, reason: str) -> 
     closed = dict(trade)
     closed["exit_price"] = exit_price
     closed["current_price"] = exit_price
+    closed["closed_timestamp"] = timestamp
     closed["closed_at"] = iso_from_timestamp(timestamp)
     closed["close_reason"] = reason
     closed["pnl_usdt"] = calculate_pnl(closed["side"], closed["entry_price"], exit_price, closed["notional_usdt"])
     closed["pnl_percent"] = round(closed["pnl_usdt"] / closed["margin_usdt"] * 100, 2) if closed["margin_usdt"] else 0
     return closed
+
+
+def apply_portfolio_margin_limit(trades: list[dict], account_balance: float) -> tuple[list[dict], int, int]:
+    if account_balance <= 0:
+        return trades, 0, 0
+
+    accepted: list[dict] = []
+    open_trades: list[dict] = []
+    max_concurrent = 0
+    skipped = 0
+
+    for trade in sorted(trades, key=lambda item: (int(item.get("opened_timestamp") or 0), str(item.get("symbol") or ""))):
+        opened_timestamp = int(trade.get("opened_timestamp") or 0)
+        open_trades = [
+            open_trade
+            for open_trade in open_trades
+            if int(open_trade.get("closed_timestamp") or 0) > opened_timestamp
+        ]
+        used_margin = sum(float(open_trade.get("margin_usdt") or 0) for open_trade in open_trades)
+        trade_margin = float(trade.get("margin_usdt") or 0)
+        if used_margin + trade_margin > account_balance:
+            skipped += 1
+            continue
+        accepted.append(trade)
+        open_trades.append(trade)
+        max_concurrent = max(max_concurrent, len(open_trades))
+
+    return accepted, skipped, max_concurrent
+
+
+def calculate_max_concurrent_trades(trades: list[dict]) -> int:
+    events: list[tuple[int, int]] = []
+    for trade in trades:
+        opened_timestamp = int(trade.get("opened_timestamp") or 0)
+        closed_timestamp = int(trade.get("closed_timestamp") or 0)
+        if opened_timestamp:
+            events.append((opened_timestamp, 1))
+        if closed_timestamp:
+            events.append((closed_timestamp, -1))
+    active = 0
+    max_active = 0
+    for _, delta in sorted(events, key=lambda item: (item[0], item[1])):
+        active += delta
+        max_active = max(max_active, active)
+    return max_active
 
 
 def calculate_pnl(side: str, entry_price: float, exit_price: float, notional: float) -> float:
@@ -1178,6 +1296,8 @@ def build_backtest_summary(
     trend_interval: str = "4h",
     excluded_period_end_trades: int = 0,
     excluded_low_risk_reward_trades: int = 0,
+    excluded_portfolio_trades: int = 0,
+    max_concurrent_trades: int = 0,
 ) -> dict:
     total_pnl = round(sum(trade["pnl_usdt"] for trade in trades), 2)
     total_fees = round(sum(calculate_trade_fee(trade) for trade in trades), 2)
@@ -1208,6 +1328,8 @@ def build_backtest_summary(
         "trend_interval": trend_interval,
         "excluded_period_end_trades": excluded_period_end_trades,
         "excluded_low_risk_reward_trades": excluded_low_risk_reward_trades,
+        "excluded_portfolio_trades": excluded_portfolio_trades,
+        "max_concurrent_trades": max_concurrent_trades,
     }
 
 
@@ -1221,6 +1343,8 @@ def derive_backtest_period_summary(source_run: BacktestRun, target_days: int, ac
     excluded_low_risk_reward_trades = len(period_closed_trades) - len(filtered_trades)
     if excluded_period_end_trades == 0 and target_days == source_run.days:
         excluded_period_end_trades = int(source_summary.get("excluded_period_end_trades") or 0)
+    excluded_portfolio_trades = int(source_summary.get("excluded_portfolio_trades") or 0) if target_days == source_run.days else 0
+    max_concurrent_trades = calculate_max_concurrent_trades(filtered_trades)
     summary = build_backtest_summary(
         filtered_trades,
         account_balance,
@@ -1230,6 +1354,8 @@ def derive_backtest_period_summary(source_run: BacktestRun, target_days: int, ac
         source_run.trend_interval,
         excluded_period_end_trades=excluded_period_end_trades,
         excluded_low_risk_reward_trades=excluded_low_risk_reward_trades,
+        excluded_portfolio_trades=excluded_portfolio_trades,
+        max_concurrent_trades=max_concurrent_trades,
     )
     summary.update(
         {

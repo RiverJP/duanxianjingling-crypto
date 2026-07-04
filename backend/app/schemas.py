@@ -147,6 +147,8 @@ class BacktestSummaryOut(BaseModel):
     worst_trade: float
     excluded_period_end_trades: int = 0
     excluded_low_risk_reward_trades: int = 0
+    excluded_portfolio_trades: int = 0
+    max_concurrent_trades: int = 0
 
 
 class BacktestTradeOut(BaseModel):

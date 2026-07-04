@@ -59,7 +59,7 @@ function ComparisonCard({ item }: { item: BacktestComparisonItem }) {
   const netPnlPercent = summary.net_pnl_percent ?? summary.total_pnl_percent;
   return (
     <Link
-      href={`/backtest?days=${item.days}&interval=15m&version=v3`}
+      href={`/backtest?days=${item.days}&interval=15m&version=v4`}
       className={`block rounded border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${
         summary.total_pnl >= 0 ? "border-mint/20 bg-mint/10" : "border-coral/20 bg-coral/10"
       }`}
@@ -87,6 +87,9 @@ function ComparisonCard({ item }: { item: BacktestComparisonItem }) {
       ) : null}
       {summary.excluded_low_risk_reward_trades > 0 ? (
         <p className="mt-1 text-xs text-ink/50">已排除低盈亏比 {summary.excluded_low_risk_reward_trades} 笔</p>
+      ) : null}
+      {summary.excluded_portfolio_trades > 0 ? (
+        <p className="mt-1 text-xs text-ink/50">保证金过滤 {summary.excluded_portfolio_trades} 笔</p>
       ) : null}
       <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
         <MiniStat label="收益率" value={`${summary.total_pnl_percent >= 0 ? "+" : ""}${summary.total_pnl_percent}%`} />
