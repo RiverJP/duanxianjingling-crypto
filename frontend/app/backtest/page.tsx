@@ -19,21 +19,16 @@ const INTERVALS = [
   { interval: "15m", label: "15分钟开单" },
 ];
 
-const VERSION_OPTIONS = [
-  { value: "v1", label: "v1", description: "indicator-v1.1" },
-  { value: "v2", label: "v2", description: "2026-07-04v2" },
-  { value: "v3", label: "v3", description: "2026-07-04v3" },
-];
-
 export default async function BacktestPage({ searchParams }: { searchParams?: Promise<{ days?: string; interval?: string; version?: string }> }) {
   const params = await searchParams;
   const requestedDays = normalizeDays(params?.days);
   const requestedInterval = normalizeInterval(params?.interval);
   const requestedVersion = normalizeVersion(params?.version);
   const recentRuns = await getBacktestRuns(20);
+  const v3RecentRuns = recentRuns.filter(isV3Run);
   const result = await getSavedBacktestResult(requestedDays ?? 30, requestedInterval, "indicator", 0, requestedVersion).catch(() => null);
   if (!result) {
-    return <BacktestMissingPage days={requestedDays ?? 30} interval={requestedInterval} version={requestedVersion} recentRuns={recentRuns} />;
+    return <BacktestMissingPage days={requestedDays ?? 30} interval={requestedInterval} version={requestedVersion} recentRuns={v3RecentRuns} />;
   }
   const { summary, rules, assets, equity_curve: equityCurve } = result;
   const isFallback = !requestedDays && summary.days !== 30;
@@ -65,25 +60,16 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
               若当前周期没有独立回测记录，页面会自动使用更长周期保存记录按开仓时间切出当前周期数据。
             </p>
           ) : null}
-          <div className="mt-4 flex flex-wrap gap-2">
-            {VERSION_OPTIONS.map((item) => (
-              <Link
-                key={item.value}
-                href={`/backtest?days=${summary.days}&interval=${summary.execution_interval}&version=${item.value}`}
-                className={`rounded border px-3 py-2 text-sm font-medium ${
-                  requestedVersion === item.value ? "border-ink bg-ink text-white" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
-                }`}
-                title={item.description}
-              >
-                {item.label}
-              </Link>
-            ))}
+          <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
+            <span>当前只展示</span>
+            <span className="font-semibold text-ink">v3</span>
+            <span className="text-xs text-ink/45">2026-07-04v3</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
               <Link
                 key={period.days}
-                href={`/backtest?days=${period.days}&interval=${summary.execution_interval}&version=${requestedVersion}`}
+                href={`/backtest?days=${period.days}&interval=${summary.execution_interval}&version=v3`}
                 className={`rounded border px-3 py-2 text-sm font-medium ${
                   summary.days === period.days ? "border-mint bg-mint/15 text-mint" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
                 }`}
@@ -96,7 +82,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
             {INTERVALS.map((item) => (
               <Link
                 key={item.interval}
-                href={`/backtest?days=${summary.days}&interval=${item.interval}&version=${requestedVersion}`}
+                href={`/backtest?days=${summary.days}&interval=${item.interval}&version=v3`}
                 className={`rounded border px-3 py-2 text-sm font-medium ${
                   summary.execution_interval === item.interval ? "border-gold bg-gold/15 text-ink" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
                 }`}
@@ -408,11 +394,12 @@ function normalizeInterval(value?: string): string {
   return "15m";
 }
 
-function normalizeVersion(value?: string): string {
-  if (value === "v1" || value === "v2" || value === "v3") {
-    return value;
-  }
+function normalizeVersion(_value?: string): string {
   return "v3";
+}
+
+function isV3Run(run: BacktestRun): boolean {
+  return run.strategy_version === "v3" || run.strategy_version === "2026-07-04v3";
 }
 
 function formatInterval(value: string): string {
