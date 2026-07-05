@@ -27,12 +27,16 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v6.2-risk-adjusted"
+BACKTEST_STRATEGY_VERSION = "2026-07-04v6.3-trend-trailing"
 STRICT_MIN_QUALITY_SCORE = 90
 BASE_INDICATOR_QUALITY = 62
 MIN_BACKTEST_RISK_REWARD_RATIO = 1.3
 TREND_TARGET_RISK_REWARD_RATIO = 1.5
 RANGE_TARGET_RISK_REWARD_RATIO = 1.3
+TREND_BREAKEVEN_RISK_MULTIPLE = 1.0
+TREND_TRAILING_RISK_MULTIPLE = 1.5
+TREND_TRAILING_SWING_LOOKBACK = 8
+TREND_TRAILING_EMA_LOOKBACK = 30
 MIN_VOLUME_TO_CAP_RATIO = 0.03
 MAX_DAILY_TRADES_PER_ASSET = 1
 MAX_STRUCTURE_STOP_DISTANCE_RATIO = 0.05
@@ -309,14 +313,15 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             f"只有支撑/阻力距离开仓价不超过 {MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}% 时，才允许作为结构止损；距离太远则回退为波幅止损。",
         ],
         "take_profit_logic": [
-            f"趋势单默认盈亏比约 {TREND_TARGET_RISK_REWARD_RATIO:.1f}:1。",
-            f"区间单默认盈亏比约 {RANGE_TARGET_RISK_REWARD_RATIO:.1f}:1。",
-            "止盈价基于最终止损距离重新计算，避免结构止损过远时出现低盈亏比单。",
+            f"趋势单先生成 {TREND_TARGET_RISK_REWARD_RATIO:.1f}R 参考目标，但不把该目标作为硬止盈；趋势单到 {TREND_BREAKEVEN_RISK_MULTIPLE:.1f}R 后移动到保本，超过 {TREND_TRAILING_RISK_MULTIPLE:.1f}R 后用近{TREND_TRAILING_SWING_LOOKBACK}根执行周期结构和EMA20跟踪止损。",
+            f"区间单默认固定盈亏比约 {RANGE_TARGET_RISK_REWARD_RATIO:.1f}:1。",
+            "止盈价基于最终止损距离重新计算，避免结构止损过远时出现低盈亏比单；趋势单止盈价只作为参考目标和盈亏比过滤依据。",
             "区间多的止盈会参考上方阻力；区间空的止盈会参考下方支撑。",
         ],
         "exit_logic": [
-            "价格触发止盈时平仓。",
+            "区间单价格触发止盈时平仓；趋势单不因参考止盈价直接平仓。",
             "价格触发止损时平仓。",
+            "趋势单达到1R后移动止损到开仓价附近，达到1.5R后按执行周期结构/EMA20移动止损，移动止损触发时平仓。",
             "15m 单最长持仓延长到 7 天；到期仍未触发止盈止损时，按当根收盘价到期平仓。",
             "回测结束仍未触发止盈止损的单会标记为期末平仓，但默认不纳入胜率、盈亏和资金曲线统计。",
         ],
@@ -329,7 +334,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "趋势线：使用最近 60 根观察周期 K 线和 EMA 排列判断方向。",
             "结构：近 45 根日线聚合 K 线检测双底/双顶。",
             "支撑阻力：近 30 根日线聚合 K 线低点为支撑，高点为阻力。",
-            f"量价关系：v6.2 不再只看 24h 成交额 / 市值；若15m K线有成交量，信号K线成交量必须达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上；历史K线无成交量时不直接过滤，但不给放量加分。",
+            f"量价关系：v6.3 不再只看 24h 成交额 / 市值；若15m K线有成交量，信号K线成交量必须达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上；历史K线无成交量时不直接过滤，但不给放量加分。",
             f"15m确认：做多要求收阳、重新站回EMA20或突破近6根高点，并且不是近16根涨幅超过 {MAX_15M_CHASE_MOVE_RATIO * 100:.0f}% 的追涨；做空反向处理。",
             f"波动过滤：近20根15m平均振幅超过价格 {MAX_15M_AVERAGE_RANGE_RATIO * 100:.1f}% 的标的暂不交易，避免小币脏波动反复扫损。",
         ],
@@ -425,7 +430,8 @@ def backtest_asset(
         signal_time = candle_time + execution_seconds
 
         if open_trade:
-            closed = maybe_close_trade(open_trade, high, low, close, signal_time)
+            recent_rows = rows[max(0, index - TREND_TRAILING_EMA_LOOKBACK):index]
+            closed = maybe_close_trade(open_trade, high, low, close, signal_time, recent_rows)
             if closed:
                 trades.append(closed)
                 open_trade = None
@@ -501,7 +507,7 @@ def backtest_asset(
             continue
 
         entry_reasons = list(plan.get("entry_reasons") or [])
-        entry_reasons.append("v6.2确认回测：1H/4H同向，15m确认K线收盘后确认，下一根15m K线开盘价成交")
+        entry_reasons.append("v6.3确认回测：1H/4H同向，15m确认K线收盘后确认，下一根15m K线开盘价成交；趋势单用保本和移动止损退出")
         indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
         indicator_snapshot["signal_price"] = round_price(close)
         indicator_snapshot["entry_price"] = round_price(entry_price)
@@ -529,6 +535,13 @@ def backtest_asset(
             "exit_price": None,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
+            "initial_stop_loss": stop_loss,
+            "initial_risk": abs(entry_price - stop_loss),
+            "trend_trailing_enabled": is_trend_strategy_type(strategy_type),
+            "breakeven_activated": False,
+            "trailing_activated": False,
+            "best_price": entry_price,
+            "worst_price": entry_price,
             "risk_reward_ratio": delayed_risk_reward_ratio,
             "margin_usdt": margin_per_trade,
             "leverage": leverage,
@@ -554,12 +567,14 @@ def backtest_asset(
 
     if open_trade:
         last = rows[-1]
+        recent_rows = rows[max(0, len(rows) - TREND_TRAILING_EMA_LOOKBACK - 1):-1]
         closed = maybe_close_trade(
             open_trade,
             float(last["high"]),
             float(last["low"]),
             float(last["close"]),
             int(last["time"]) + execution_seconds,
+            recent_rows,
         )
         trades.append(closed or close_trade(open_trade, float(last["close"]), int(last["time"]) + execution_seconds, "期末平仓"))
 
@@ -976,7 +991,7 @@ def build_indicator_snapshot(
             f"信号K成交量/近20根均量={signal_volume_multiple:.2f}倍，最低要求>={MIN_SIGNAL_VOLUME_MULTIPLE:.2f}倍。"
         ),
         "execution_confirmation_detail": f"15m EMA20={format_optional_level(execution_ema20)}，EMA50={format_optional_level(execution_ema50)}；近16根涨跌={recent_move_ratio * 100:.2f}%，近20根平均振幅={average_range_ratio * 100:.2f}%。",
-        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6.2确认口径会在信号K线收盘后，以下一根15m开盘价成交。",
+        "risk_plan_detail": f"止损={round_price(stop_loss)}，参考止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6.3确认口径会在信号K线收盘后，以下一根15m开盘价成交，趋势单达到1R后保本、达到1.5R后移动止损。",
         "entry_reason_detail": "；".join(entry_reasons),
     }
 
@@ -1017,7 +1032,7 @@ def build_trade_opening_logic(
     )
     return (
         f"{symbol} 触发{direction_text}，策略类型为{strategy_type}，指标质量分 {quality}/100。"
-        f"开仓价 {round_price(entry_price)}，止损 {round_price(stop_loss)}，止盈 {round_price(take_profit)}，计划盈亏比约 {rr:.2f}:1。"
+        f"开仓价 {round_price(entry_price)}，止损 {round_price(stop_loss)}，参考止盈 {round_price(take_profit)}，计划盈亏比约 {rr:.2f}:1。"
         f"判断依据：{reason_text}。"
         f"逐项指标：{indicator_detail_text}。"
     )
@@ -1360,23 +1375,114 @@ def build_report_asset_results(source_assets: list[dict], trades: list[dict], ex
     return sorted(results, key=lambda item: (item["total_trades"], item["best_opportunity_score"], item["market_cap"]), reverse=True)
 
 
-def maybe_close_trade(trade: dict, high: float, low: float, close: float, timestamp: int) -> dict | None:
+def maybe_close_trade(
+    trade: dict,
+    high: float,
+    low: float,
+    close: float,
+    timestamp: int,
+    recent_rows: list[dict[str, float | int]] | None = None,
+) -> dict | None:
+    trend_trailing_enabled = bool(trade.get("trend_trailing_enabled"))
     if trade["side"] == "做多":
         if low <= trade["stop_loss"]:
-            return close_trade(trade, trade["stop_loss"], timestamp, "止损")
-        if high >= trade["take_profit"]:
+            return close_trade(trade, trade["stop_loss"], timestamp, trend_stop_reason(trade))
+        if not trend_trailing_enabled and high >= trade["take_profit"]:
             return close_trade(trade, trade["take_profit"], timestamp, "止盈")
     if trade["side"] == "做空":
         if high >= trade["stop_loss"]:
-            return close_trade(trade, trade["stop_loss"], timestamp, "止损")
-        if low <= trade["take_profit"]:
+            return close_trade(trade, trade["stop_loss"], timestamp, trend_stop_reason(trade))
+        if not trend_trailing_enabled and low <= trade["take_profit"]:
             return close_trade(trade, trade["take_profit"], timestamp, "止盈")
+    if trend_trailing_enabled:
+        update_trend_trailing_stop(trade, high, low, close, recent_rows or [])
     opened_timestamp = int(trade.get("opened_timestamp") or timestamp)
     max_holding_seconds = int(trade.get("max_holding_seconds") or 0)
     if max_holding_seconds and timestamp - opened_timestamp >= max_holding_seconds:
         return close_trade(trade, close, timestamp, "到期平仓")
     trade["current_price"] = close
     return None
+
+
+def is_trend_strategy_type(strategy_type: str) -> bool:
+    return strategy_type in {"趋势多", "趋势空"}
+
+
+def trend_stop_reason(trade: dict) -> str:
+    if not trade.get("trend_trailing_enabled"):
+        return "止损"
+    if trade.get("trailing_activated"):
+        return "移动止损"
+    if trade.get("breakeven_activated"):
+        return "保本止损"
+    return "止损"
+
+
+def update_trend_trailing_stop(
+    trade: dict,
+    high: float,
+    low: float,
+    close: float,
+    recent_rows: list[dict[str, float | int]],
+) -> None:
+    entry_price = float(trade.get("entry_price") or 0)
+    initial_risk = float(trade.get("initial_risk") or 0)
+    if entry_price <= 0 or initial_risk <= 0:
+        return
+
+    if trade["side"] == "做多":
+        best_price = max(float(trade.get("best_price") or entry_price), high)
+        trade["best_price"] = best_price
+        if close >= entry_price + initial_risk * TREND_BREAKEVEN_RISK_MULTIPLE:
+            raise_long_stop(trade, entry_price, "breakeven")
+        if close >= entry_price + initial_risk * TREND_TRAILING_RISK_MULTIPLE:
+            swing_rows = recent_rows[-TREND_TRAILING_SWING_LOOKBACK:]
+            swing_stop = min(float(row["low"]) for row in swing_rows) if swing_rows else entry_price
+            ema_stop = ema([float(row["close"]) for row in recent_rows], 20) if len(recent_rows) >= 20 else None
+            risk_stop = best_price - initial_risk
+            candidates = [entry_price, swing_stop, risk_stop]
+            if ema_stop:
+                candidates.append(float(ema_stop))
+            candidate = min(max(candidates), close * 0.999)
+            raise_long_stop(trade, candidate, "trailing")
+        return
+
+    worst_price = min(float(trade.get("worst_price") or entry_price), low)
+    trade["worst_price"] = worst_price
+    if close <= entry_price - initial_risk * TREND_BREAKEVEN_RISK_MULTIPLE:
+        lower_short_stop(trade, entry_price, "breakeven")
+    if close <= entry_price - initial_risk * TREND_TRAILING_RISK_MULTIPLE:
+        swing_rows = recent_rows[-TREND_TRAILING_SWING_LOOKBACK:]
+        swing_stop = max(float(row["high"]) for row in swing_rows) if swing_rows else entry_price
+        ema_stop = ema([float(row["close"]) for row in recent_rows], 20) if len(recent_rows) >= 20 else None
+        risk_stop = worst_price + initial_risk
+        candidates = [entry_price, swing_stop, risk_stop]
+        if ema_stop:
+            candidates.append(float(ema_stop))
+        candidate = max(min(candidates), close * 1.001)
+        lower_short_stop(trade, candidate, "trailing")
+
+
+def raise_long_stop(trade: dict, stop_price: float, mode: str) -> None:
+    current_stop = float(trade.get("stop_loss") or 0)
+    if stop_price > current_stop:
+        trade["stop_loss"] = round_price(stop_price)
+        if mode == "breakeven":
+            trade["breakeven_activated"] = True
+        if mode == "trailing":
+            trade["breakeven_activated"] = True
+            trade["trailing_activated"] = True
+
+
+def lower_short_stop(trade: dict, stop_price: float, mode: str) -> None:
+    current_stop = float(trade.get("stop_loss") or 0)
+    if current_stop <= 0 or stop_price < current_stop:
+        trade["stop_loss"] = round_price(stop_price)
+        if mode == "breakeven":
+            trade["breakeven_activated"] = True
+        if mode == "trailing":
+            trade["breakeven_activated"] = True
+            trade["trailing_activated"] = True
 
 
 def close_trade(trade: dict, exit_price: float, timestamp: int, reason: str) -> dict:

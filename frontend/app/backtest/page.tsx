@@ -63,7 +63,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
             <span className="font-semibold text-ink">v6</span>
-            <span className="text-xs text-ink/45">2026-07-04v6.2-risk-adjusted</span>
+            <span className="text-xs text-ink/45">2026-07-04v6.3-trend-trailing</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
@@ -187,7 +187,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
             <div>
               <h2 className="text-xl font-semibold">全部回测标的</h2>
               <p className="mt-1 text-sm text-ink/55">
-                本次逐个回测 {summary.tested_assets} 个标的，使用 {formatInterval(summary.execution_interval)} 执行交易、{formatInterval(summary.trend_interval)} 观察方向。只有指标质量分 &gt;= 80、方向为做多/做空、且有可执行止盈止损计划时才会开仓。
+                本次逐个回测 {summary.tested_assets} 个标的，使用 {formatInterval(summary.execution_interval)} 执行交易、{formatInterval(summary.trend_interval)} 观察方向。只有指标质量分 &gt;= 80、方向为做多/做空、且有可执行止损/参考目标计划时才会开仓。
               </p>
             </div>
           </div>
@@ -314,7 +314,7 @@ function BacktestRulesSection({ rules }: { rules: BacktestRules }) {
         <RuleList title="做多逻辑" items={rules.long_logic} />
         <RuleList title="做空逻辑" items={rules.short_logic} />
         <RuleList title="止损逻辑" items={rules.stop_loss_logic} />
-        <RuleList title="止盈逻辑" items={rules.take_profit_logic} />
+        <RuleList title="止盈 / 移动止损逻辑" items={rules.take_profit_logic} />
         <RuleList title="平仓逻辑" items={rules.exit_logic} />
         <RuleList title="风险说明" items={rules.risk_notes} />
       </div>
@@ -406,7 +406,7 @@ function normalizeVersion(value?: string): string {
 }
 
 function isActiveVersionRun(run: BacktestRun): boolean {
-  return run.strategy_version === "v6" || run.strategy_version === "2026-07-04v6.2-risk-adjusted";
+  return run.strategy_version === "v6" || run.strategy_version === "2026-07-04v6.3-trend-trailing";
 }
 
 function formatInterval(value: string): string {
@@ -448,7 +448,7 @@ function BacktestTradeCard({ trade }: { trade: BacktestTrade }) {
       <div className="grid grid-cols-2 gap-2 text-sm">
         <TradeMiniStat label="开仓" value={formatCurrency(trade.entry_price)} />
         <TradeMiniStat label="平仓" value={trade.exit_price ? formatCurrency(trade.exit_price) : "暂无"} />
-        <TradeMiniStat label="止盈" value={trade.take_profit ? formatCurrency(trade.take_profit) : "暂无"} />
+        <TradeMiniStat label="参考止盈" value={trade.take_profit ? formatCurrency(trade.take_profit) : "暂无"} />
         <TradeMiniStat label="止损" value={trade.stop_loss ? formatCurrency(trade.stop_loss) : "暂无"} />
       </div>
       <div className="mt-3 flex items-center justify-between gap-3 text-sm">
@@ -538,7 +538,7 @@ function formatSnapshotEntries(snapshot: Record<string, unknown> | null | undefi
     support_resistance_detail: "支撑阻力",
     structure_detail: "结构形态",
     volume_filter_detail: "量价过滤详情",
-    risk_plan_detail: "止盈止损计划",
+    risk_plan_detail: "止损/参考目标计划",
     entry_reason_detail: "入场原因汇总",
     note: "说明",
   };

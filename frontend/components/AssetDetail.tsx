@@ -62,7 +62,7 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
       <section className="mt-8 grid gap-4 md:grid-cols-5">
         <MetricCard label="交易方向" value={asset.trade_signal} accent={asset.trade_signal === "做多" ? "mint" : asset.trade_signal === "做空" ? "coral" : "ink"} />
         <MetricCard label="参考入场" value={asset.entry_price ? formatCurrency(asset.entry_price) : "等待"} />
-        <MetricCard label="止盈" value={asset.take_profit ? formatCurrency(asset.take_profit) : "暂无"} accent="gold" />
+        <MetricCard label="参考止盈" value={asset.take_profit ? formatCurrency(asset.take_profit) : "暂无"} accent="gold" />
         <MetricCard label="止损" value={asset.stop_loss ? formatCurrency(asset.stop_loss) : "暂无"} accent="coral" />
         <MetricCard label="当前计划盈亏比" value={asset.risk_reward_ratio ? `${asset.risk_reward_ratio}:1` : "暂无"} />
       </section>
@@ -234,7 +234,7 @@ export function AssetDetail({ asset, candles }: { asset: Asset; candles: OhlcCan
           </div>
 
           <div className="rounded border border-ink/10 p-4 lg:col-span-2">
-            <h3 className="text-sm font-semibold text-ink">8. 止损止盈怎么估</h3>
+            <h3 className="text-sm font-semibold text-ink">8. 止损和参考目标怎么估</h3>
             <div className="mt-3 grid gap-4 text-sm leading-6 text-ink/70 md:grid-cols-2">
               <div>
                 <p>风险百分比 = max(1.5%, min(8%, 风险分/100 * 6%))。</p>
@@ -310,7 +310,7 @@ function StrategyFramework({ asset, context }: { asset: Asset; context: Strategy
           </div>
           <p className="mt-3 text-2xl font-semibold">{context.preferredDirection}</p>
           <p className="mt-2 text-sm leading-6 text-ink/65">
-            {context.dailyRegime} · {context.strategyType}。这里展示后台 v6.2 确认指标策略当前保存的方向、结构和风控结论，和上方交易方向保持同一套口径。
+            {context.dailyRegime} · {context.strategyType}。这里展示后台 v6.3 确认指标策略当前保存的方向、结构和风控结论，和上方交易方向保持同一套口径。
           </p>
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <DecisionBadge label="做多条件" passed={context.longAllowed} />
@@ -353,7 +353,7 @@ function buildStrategyContext(asset: Asset, candles: OhlcCandle[]): StrategyCont
   const current = asset.current_price || candles.at(-1)?.close || 0;
   const dailyRegime = asset.market_cycle && asset.market_cycle !== "数据不足" ? asset.market_cycle : "等待K线结构确认";
   const preferredDirection = asset.trade_signal === "做多" ? "当前策略做多" : asset.trade_signal === "做空" ? "当前策略做空" : "当前观望";
-  const strategyType = extractStrategyType(asset.opportunity_reason) || extractStrategyType(asset.trade_rationale) || (asset.trade_signal === "观望" ? "未触发v6.2开仓" : "v6.2确认指标策略");
+  const strategyType = extractStrategyType(asset.opportunity_reason) || extractStrategyType(asset.trade_rationale) || (asset.trade_signal === "观望" ? "未触发v6.3开仓" : "v6.3确认指标策略");
   const support = asset.support_level;
   const resistance = asset.resistance_level;
   const fibText = fibLevelsText(asset);
@@ -419,7 +419,7 @@ function fibLevelsText(asset: Asset): string {
 function buildSavedStrategyReasons(asset: Asset): string[] {
   const source = asset.opportunity_reason || asset.trade_rationale;
   if (!source) {
-    return ["等待 v6.2 确认指标策略刷新。"];
+    return ["等待 v6.3 确认指标策略刷新。"];
   }
   const cleaned = source.replace(/^v[356](?:精选|确认)?指标策略[:：][^。]*。?/, "");
   const items = cleaned.split(/[；。]/).map((item) => item.trim()).filter(Boolean);

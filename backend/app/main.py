@@ -42,7 +42,7 @@ BACKTEST_VERSION_ALIASES = {
     "v3": "2026-07-04v3",
     "v4": "2026-07-04v4-strict",
     "v5": "2026-07-04v5-selective",
-    "v6": "2026-07-04v6.2-risk-adjusted",
+    "v6": "2026-07-04v6.3-trend-trailing",
 }
 
 app.add_middleware(
