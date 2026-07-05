@@ -41,6 +41,7 @@ BACKTEST_VERSION_ALIASES = {
     "v2": "2026-07-04v2",
     "v3": "2026-07-04v3",
     "v4": "2026-07-04v4-strict",
+    "v5": "2026-07-04v5-selective",
 }
 
 app.add_middleware(

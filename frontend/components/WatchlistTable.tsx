@@ -33,7 +33,7 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <MobileStat label="机会分" value={`${asset.opportunity_score}/100`} strong />
-              <MobileStat label="v3计划盈亏比" value={formatRiskReward(asset.risk_reward_ratio)} strong tone={asset.risk_reward_ratio && asset.risk_reward_ratio >= 1 ? "mint" : "ink"} />
+              <MobileStat label="v5计划盈亏比" value={formatRiskReward(asset.risk_reward_ratio)} strong tone={asset.risk_reward_ratio && asset.risk_reward_ratio >= 1.5 ? "mint" : "ink"} />
               <MobileStat label="价格" value={formatCurrency(asset.current_price)} />
               <MobileStat label="24小时" value={formatPercent(asset.change_24h)} tone={asset.change_24h >= 0 ? "mint" : "coral"} />
               <MobileStat label="成交量" value={formatCompactCurrency(asset.volume_24h)} />
@@ -59,9 +59,9 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
         <thead className="bg-panel text-xs uppercase tracking-wide text-ink/55">
           <tr>
             <th className="px-4 py-3">资产</th>
-            <th className="px-4 py-3">v3机会</th>
+            <th className="px-4 py-3">v5机会</th>
             <th className="px-4 py-3">机会分</th>
-            <th className="px-4 py-3">v3计划盈亏比</th>
+            <th className="px-4 py-3">v5计划盈亏比</th>
             <th className="px-4 py-3">价格</th>
             <th className="px-4 py-3">24 小时</th>
             <th className="px-4 py-3">方向</th>

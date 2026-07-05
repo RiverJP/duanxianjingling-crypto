@@ -25,10 +25,10 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
   const requestedInterval = normalizeInterval(params?.interval);
   const requestedVersion = normalizeVersion(params?.version);
   const recentRuns = await getBacktestRuns(20);
-  const v4RecentRuns = recentRuns.filter(isV4Run);
+  const activeRecentRuns = recentRuns.filter(isActiveVersionRun);
   const result = await getSavedBacktestResult(requestedDays ?? 30, requestedInterval, "indicator", 0, requestedVersion).catch(() => null);
   if (!result) {
-    return <BacktestMissingPage days={requestedDays ?? 30} interval={requestedInterval} version={requestedVersion} recentRuns={v4RecentRuns} />;
+    return <BacktestMissingPage days={requestedDays ?? 30} interval={requestedInterval} version={requestedVersion} recentRuns={activeRecentRuns} />;
   }
   const { summary, rules, assets, equity_curve: equityCurve } = result;
   const isFallback = !requestedDays && summary.days !== 30;
@@ -62,14 +62,14 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           ) : null}
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
-            <span className="font-semibold text-ink">v4</span>
-            <span className="text-xs text-ink/45">2026-07-04v4-strict</span>
+            <span className="font-semibold text-ink">v5</span>
+            <span className="text-xs text-ink/45">2026-07-04v5-selective</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
               <Link
                 key={period.days}
-                href={`/backtest?days=${period.days}&interval=${summary.execution_interval}&version=v4`}
+                href={`/backtest?days=${period.days}&interval=${summary.execution_interval}&version=${requestedVersion}`}
                 className={`rounded border px-3 py-2 text-sm font-medium ${
                   summary.days === period.days ? "border-mint bg-mint/15 text-mint" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
                 }`}
@@ -82,7 +82,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
             {INTERVALS.map((item) => (
               <Link
                 key={item.interval}
-                href={`/backtest?days=${summary.days}&interval=${item.interval}&version=v4`}
+                href={`/backtest?days=${summary.days}&interval=${item.interval}&version=${requestedVersion}`}
                 className={`rounded border px-3 py-2 text-sm font-medium ${
                   summary.execution_interval === item.interval ? "border-gold bg-gold/15 text-ink" : "border-ink/10 bg-white text-ink/60 hover:text-ink"
                 }`}
@@ -124,7 +124,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
               ) : null}
               {summary.excluded_low_risk_reward_trades > 0 ? (
                 <p className="mt-2 text-xs leading-5 text-ink/55">
-                  已排除 {summary.excluded_low_risk_reward_trades} 笔计划盈亏比低于 1:1 的交易。
+                  已排除 {summary.excluded_low_risk_reward_trades} 笔计划盈亏比低于 1.5:1 的交易。
                 </p>
               ) : null}
               {summary.excluded_portfolio_trades > 0 ? (
@@ -401,12 +401,15 @@ function normalizeInterval(value?: string): string {
   return "15m";
 }
 
-function normalizeVersion(_value?: string): string {
-  return "v4";
+function normalizeVersion(value?: string): string {
+  if (value === "v4" || value === "2026-07-04v4-strict") {
+    return "v4";
+  }
+  return "v5";
 }
 
-function isV4Run(run: BacktestRun): boolean {
-  return run.strategy_version === "v4" || run.strategy_version === "2026-07-04v4-strict";
+function isActiveVersionRun(run: BacktestRun): boolean {
+  return run.strategy_version === "v5" || run.strategy_version === "2026-07-04v5-selective";
 }
 
 function formatInterval(value: string): string {

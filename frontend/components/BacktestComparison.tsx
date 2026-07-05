@@ -41,7 +41,7 @@ export function BacktestComparison({ version }: { version: string }) {
       <div className="grid gap-3 md:grid-cols-3">
         {(items.length ? items : fallbackItems()).map((item) => {
           if (item.summary) {
-            return <ComparisonCard key={item.days} item={item} />;
+            return <ComparisonCard key={item.days} item={item} version={version} />;
           }
           return <ComparisonPlaceholder key={item.days} label={item.label} loading={loading} />;
         })}
@@ -50,7 +50,7 @@ export function BacktestComparison({ version }: { version: string }) {
   );
 }
 
-function ComparisonCard({ item }: { item: BacktestComparisonItem }) {
+function ComparisonCard({ item, version }: { item: BacktestComparisonItem; version: string }) {
   const summary = item.summary;
   if (!summary) {
     return null;
@@ -59,7 +59,7 @@ function ComparisonCard({ item }: { item: BacktestComparisonItem }) {
   const netPnlPercent = summary.net_pnl_percent ?? summary.total_pnl_percent;
   return (
     <Link
-      href={`/backtest?days=${item.days}&interval=15m&version=v4`}
+      href={`/backtest?days=${item.days}&interval=15m&version=${version}`}
       className={`block rounded border p-4 transition hover:-translate-y-0.5 hover:shadow-sm ${
         summary.total_pnl >= 0 ? "border-mint/20 bg-mint/10" : "border-coral/20 bg-coral/10"
       }`}

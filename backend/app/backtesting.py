@@ -27,10 +27,20 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v4-strict"
-MIN_BACKTEST_RISK_REWARD_RATIO = 1.0
+BACKTEST_STRATEGY_VERSION = "2026-07-04v5-selective"
+STRICT_MIN_QUALITY_SCORE = 88
+BASE_INDICATOR_QUALITY = 66
+MIN_BACKTEST_RISK_REWARD_RATIO = 1.5
+MIN_VOLUME_TO_CAP_RATIO = 0.03
+MAX_DAILY_TRADES_PER_ASSET = 1
 MAX_STRUCTURE_STOP_DISTANCE_RATIO = 0.05
 BACKTEST_FEE_RATE = 0.0012
+
+
+def effective_min_quality_score(strategy_mode: str, configured_score: int) -> int:
+    if strategy_mode == "indicator":
+        return max(configured_score, STRICT_MIN_QUALITY_SCORE)
+    return configured_score
 
 
 async def run_month_backtest(
@@ -47,7 +57,8 @@ async def run_month_backtest(
     max_days = 180
     capped_days = max(30, min(days, max_days))
     capped_limit = max(1, min(limit, settings.tracked_asset_count))
-    cache_key = f"{BACKTEST_STRATEGY_VERSION}:{strategy_mode}:{capped_days}:{capped_limit}:{execution_interval}:{settings.paper_min_opportunity_score}"
+    min_quality_score = effective_min_quality_score(strategy_mode, settings.paper_min_opportunity_score)
+    cache_key = f"{BACKTEST_STRATEGY_VERSION}:{strategy_mode}:{capped_days}:{capped_limit}:{execution_interval}:{min_quality_score}"
     cached = BACKTEST_CACHE.get(cache_key)
     if cached and time() - cached[0] < BACKTEST_CACHE_TTL_SECONDS:
         return cached[1]
@@ -91,7 +102,7 @@ async def run_month_backtest(
             capped_days,
             settings.paper_margin_per_trade,
             settings.paper_leverage,
-            settings.paper_min_opportunity_score,
+            min_quality_score,
             asset_execution_interval,
             trend_candles,
             trend_filters,
@@ -170,7 +181,7 @@ async def run_month_backtest(
         excluded_portfolio_trades=excluded_portfolio_trades,
         max_concurrent_trades=max_concurrent_trades,
     )
-    rules = build_backtest_rules(strategy_mode, execution_interval, trend_interval, settings.paper_min_opportunity_score)
+    rules = build_backtest_rules(strategy_mode, execution_interval, trend_interval, min_quality_score)
     result = {
         "summary": summary,
         "rules": rules,
@@ -188,7 +199,7 @@ async def run_month_backtest(
             "execution_interval": execution_interval,
             "trend_interval": trend_interval,
             "strategy_mode": strategy_mode,
-            "min_quality_score": settings.paper_min_opportunity_score,
+            "min_quality_score": min_quality_score,
             "margin_per_trade": settings.paper_margin_per_trade,
             "leverage": settings.paper_leverage,
             "max_used_margin": settings.paper_account_balance,
@@ -268,21 +279,22 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
         "entry_conditions": [
             f"指标质量分必须 >= {min_quality_score}。",
             f"计划盈亏比必须 >= {MIN_BACKTEST_RISK_REWARD_RATIO:.1f}:1。",
-            "市值成交活跃度过滤：24h 成交额 / 市值 >= 1.5%。",
+            f"市值成交活跃度过滤：24h 成交额 / 市值 >= {MIN_VOLUME_TO_CAP_RATIO * 100:.1f}%。",
             "上升趋势只允许做多；下降趋势只允许做空；震荡区间允许靠近支撑做多、靠近阻力做空。",
-            "15m 执行时，1H 和 4H 方向不能与开仓方向冲突。",
+            "15m 执行时，1H 和 4H 必须同时与开仓方向一致。",
+            f"单个标的每天最多开 {MAX_DAILY_TRADES_PER_ASSET} 单，避免 15m 反复被同一波动扫损。",
             "信号必须有可计算的止盈价和止损价，否则不允许开仓。",
         ],
         "long_logic": [
             "日线/4H 判断为上升趋势，且 4H 指标方向为做多。",
-            "1H 方向不能为做空。",
-            "满足以下至少一类入场原因：靠近支撑、靠近斐波那契回撤支撑、出现双底结构、突破 DT 上轨、或 1H 顺势做多。",
+            "1H 和 4H 方向都必须为做多。",
+            "满足以下至少一类真实触发：靠近支撑、靠近斐波那契回撤支撑、出现双底结构、或突破 DT 上轨。",
             "震荡区间中，只在靠近支撑或双底结构时做多。",
         ],
         "short_logic": [
             "日线/4H 判断为下降趋势，且 4H 指标方向为做空。",
-            "1H 方向不能为做多。",
-            "满足以下至少一类入场原因：靠近阻力、靠近斐波那契反弹阻力、出现双顶结构、跌破 DT 下轨、或 1H 顺势做空。",
+            "1H 和 4H 方向都必须为做空。",
+            "满足以下至少一类真实触发：靠近阻力、靠近斐波那契反弹阻力、出现双顶结构、或跌破 DT 下轨。",
             "震荡区间中，只在靠近阻力或双顶结构时做空。",
         ],
         "stop_loss_logic": [
@@ -304,7 +316,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "回测结束仍未触发止盈止损的单会标记为期末平仓，但默认不纳入胜率、盈亏和资金曲线统计。",
         ],
         "indicator_analysis": [
-            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是先用已收盘日线和4H判断大环境，再用已收盘1H过滤方向，最后用15m收盘信号、下一根15m开盘执行。",
+            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是先用已收盘日线和4H判断大环境，再要求已收盘1H/4H同向，最后用15m收盘信号、下一根15m开盘执行。",
             "EMA：20/50 用于执行和观察周期方向；50/100 用于日线趋势判定；144/169 作为 Vegas 通道中轴。",
             "Vegas：价格在 EMA144/EMA169 通道上方偏多，在下方偏空。",
             "DT：近 20 根 K 线高低点作为突破通道，上破偏多，下破偏空。",
@@ -312,7 +324,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "趋势线：使用最近 60 根观察周期 K 线和 EMA 排列判断方向。",
             "结构：近 45 根日线聚合 K 线检测双底/双顶。",
             "支撑阻力：近 30 根日线聚合 K 线低点为支撑，高点为阻力。",
-            "量价关系：当前版本用 24h 成交额 / 市值做流动性过滤；后续可接入每根 K 线成交量后升级成真实量价确认。",
+            "量价关系：当前版本用 24h 成交额 / 市值做最低流动性过滤，门槛比 v4 更高；后续可接入每根 K 线成交量后升级成真实量价确认。",
         ],
         "risk_notes": [
             f"手续费按每笔名义仓位 {BACKTEST_FEE_RATE * 100:.2f}% 估算，汇总会同时展示扣费前和扣费后结果。",
@@ -388,6 +400,7 @@ def backtest_asset(
     max_holding_seconds = backtest_max_holding_seconds(execution_interval)
     best_opportunity_score = 0
     best_signal = "观望"
+    daily_trade_counts: dict[str, int] = {}
     lookback_candles = interval_candles_per_day(execution_interval)
     trend_rows = trend_candles or rows
     trend_filter_rows = trend_filters or {"4h": trend_rows}
@@ -476,14 +489,17 @@ def backtest_asset(
         delayed_risk_reward_ratio = calculate_plan_risk_reward(entry_price, stop_loss, take_profit)
         if delayed_risk_reward_ratio < MIN_BACKTEST_RISK_REWARD_RATIO:
             continue
+        entry_day = datetime.fromtimestamp(entry_time, tz=timezone.utc).date().isoformat()
+        if daily_trade_counts.get(entry_day, 0) >= MAX_DAILY_TRADES_PER_ASSET:
+            continue
 
         entry_reasons = list(plan.get("entry_reasons") or [])
-        entry_reasons.append("v4严格回测：信号K线收盘后确认，下一根15m K线开盘价成交")
+        entry_reasons.append("v5精选回测：1H/4H同向确认，信号K线收盘后确认，下一根15m K线开盘价成交")
         indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
         indicator_snapshot["signal_price"] = round_price(close)
         indicator_snapshot["entry_price"] = round_price(entry_price)
         indicator_snapshot["risk_reward_ratio"] = delayed_risk_reward_ratio
-        indicator_snapshot["execution_detail"] = "信号K线收盘后确认，下一根15m K线开盘价成交；1H/4H/日线只读取已完整收盘K线。"
+        indicator_snapshot["execution_detail"] = "信号K线收盘后确认，下一根15m K线开盘价成交；1H/4H必须同向，日线只读取已完整收盘K线。"
 
         opening_logic = build_trade_opening_logic(
             asset.symbol,
@@ -527,6 +543,7 @@ def backtest_asset(
             "pnl_usdt": 0.0,
             "pnl_percent": 0.0,
         }
+        daily_trade_counts[entry_day] = daily_trade_counts.get(entry_day, 0) + 1
 
     if open_trade:
         last = rows[-1]
@@ -600,7 +617,7 @@ def build_indicator_trade_plan(
         return None
 
     volume_to_cap = float(asset.volume_24h) / float(asset.market_cap) if asset.market_cap else 0
-    if volume_to_cap < 0.015:
+    if volume_to_cap < MIN_VOLUME_TO_CAP_RATIO:
         return None
 
     trend_directions = {
@@ -614,39 +631,50 @@ def build_indicator_trade_plan(
     short_context = market_context["near_resistance"] or market_context["near_fib_resistance"] or market_context["double_top"]
     dt_break_long = price >= float(market_context.get("dt_upper") or price * 10)
     dt_break_short = price <= float(market_context.get("dt_lower") or 0)
+    long_trigger = long_context or dt_break_long
+    short_trigger = short_context or dt_break_short
 
     signal = "观望"
     strategy_type = "不匹配"
-    quality = 76
+    quality = BASE_INDICATOR_QUALITY
 
     if market_regime == "上升趋势":
-        if four_hour_direction == "做多" and one_hour_direction != "做空" and (long_context or dt_break_long or one_hour_direction == "做多"):
+        if four_hour_direction == "做多" and one_hour_direction == "做多" and long_trigger:
             signal = "做多"
             strategy_type = "上升趋势区间多" if long_context else "趋势多"
     elif market_regime == "下降趋势":
-        if four_hour_direction == "做空" and one_hour_direction != "做多" and (short_context or dt_break_short or one_hour_direction == "做空"):
+        if four_hour_direction == "做空" and one_hour_direction == "做空" and short_trigger:
             signal = "做空"
             strategy_type = "下降趋势区间空" if short_context else "趋势空"
     else:
-        if long_context and one_hour_direction != "做空":
+        if long_context and four_hour_direction == "做多" and one_hour_direction == "做多":
             signal = "做多"
             strategy_type = "区间多"
-        elif short_context and one_hour_direction != "做多":
+        elif short_context and four_hour_direction == "做空" and one_hour_direction == "做空":
             signal = "做空"
             strategy_type = "区间空"
 
     if signal == "观望":
         return None
 
-    quality += 4 if four_hour_direction == signal else 0
-    quality += 3 if one_hour_direction == signal else 0
-    quality += 3 if strategy_type in {"上升趋势区间多", "下降趋势区间空", "区间多", "区间空"} else 0
-    quality += 2 if market_context["near_fib_support"] or market_context["near_fib_resistance"] else 0
-    quality += 2 if market_context["double_bottom"] or market_context["double_top"] else 0
-    quality += 2 if volume_to_cap >= 0.08 else 0
+    aligned_fib = (signal == "做多" and market_context["near_fib_support"]) or (signal == "做空" and market_context["near_fib_resistance"])
+    aligned_structure = (signal == "做多" and market_context["double_bottom"]) or (signal == "做空" and market_context["double_top"])
+    aligned_sr = (signal == "做多" and market_context["near_support"]) or (signal == "做空" and market_context["near_resistance"])
+    aligned_dt_break = (signal == "做多" and dt_break_long) or (signal == "做空" and dt_break_short)
+    aligned_market = (signal == "做多" and market_regime == "上升趋势") or (signal == "做空" and market_regime == "下降趋势")
+
+    quality += 8 if four_hour_direction == signal else 0
+    quality += 6 if one_hour_direction == signal else 0
+    quality += 4 if aligned_market else 0
+    quality += 3 if strategy_type in {"区间多", "区间空"} else 0
+    quality += 5 if aligned_sr else 0
+    quality += 4 if aligned_fib else 0
+    quality += 4 if aligned_structure else 0
+    quality += 4 if aligned_dt_break else 0
+    quality += 3 if volume_to_cap >= 0.08 else 0
     quality = min(100, quality)
 
-    if quality < 80:
+    if quality < STRICT_MIN_QUALITY_SCORE:
         return None
 
     stop_loss, take_profit = build_indicator_exit_prices(signal, price, rows, index, market_context, strategy_type)
@@ -802,8 +830,8 @@ def build_indicator_snapshot(
         "fib_detail": f"斐波支撑={format_level_list(fib_supports)}；斐波阻力={format_level_list(fib_resistances)}；靠近支撑={format_bool(market_context.get('near_fib_support'))}，靠近阻力={format_bool(market_context.get('near_fib_resistance'))}。",
         "support_resistance_detail": f"日线支撑={format_optional_level(support)}，日线阻力={format_optional_level(resistance)}；靠近支撑={format_bool(market_context.get('near_support'))}，靠近阻力={format_bool(market_context.get('near_resistance'))}。",
         "structure_detail": f"双底={format_bool(market_context.get('double_bottom'))}，双顶={format_bool(market_context.get('double_top'))}。",
-        "volume_filter_detail": f"24h成交额/市值={volume_to_cap * 100:.2f}%，最低要求>=1.50%。",
-        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v4严格口径会在信号K线收盘后，以下一根15m开盘价成交。",
+        "volume_filter_detail": f"24h成交额/市值={volume_to_cap * 100:.2f}%，最低要求>={MIN_VOLUME_TO_CAP_RATIO * 100:.1f}%。",
+        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v5精选口径会在信号K线收盘后，以下一根15m开盘价成交。",
         "entry_reason_detail": "；".join(entry_reasons),
     }
 
