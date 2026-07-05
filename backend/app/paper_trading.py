@@ -42,7 +42,7 @@ def open_new_trades(db: Session, assets: list[AssetSnapshot]) -> None:
     open_symbols = set(db.scalars(select(PaperTrade.symbol).where(PaperTrade.status == "open")))
     margin = settings.paper_margin_per_trade
     leverage = settings.paper_leverage
-    max_used_margin = max(0, settings.paper_account_balance)
+    max_used_margin = max(0, current_paper_balance(db))
     used_margin = sum(
         trade.margin_usdt
         for trade in db.scalars(select(PaperTrade).where(PaperTrade.status == "open"))
@@ -128,6 +128,13 @@ def calculate_pnl_percent(pnl_usdt: float, margin: float) -> float:
     return round(pnl_usdt / margin * 100, 2)
 
 
+def current_paper_balance(db: Session) -> float:
+    settings = get_settings()
+    closed_trades = db.scalars(select(PaperTrade).where(PaperTrade.status == "closed"))
+    realized_total = sum(trade.pnl_usdt for trade in closed_trades)
+    return round(settings.paper_account_balance + realized_total, 2)
+
+
 def build_paper_trading_summary(db: Session) -> dict:
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -140,22 +147,31 @@ def build_paper_trading_summary(db: Session) -> dict:
     total_pnl = realized_total + unrealized_total
     open_notional = sum(trade.notional_usdt for trade in open_trades)
     total_fees = sum(calculate_trade_fee(trade.notional_usdt) for trade in trades)
+    initial_balance = settings.paper_account_balance
+    account_balance = round(initial_balance + realized_total, 2)
+    equity = round(account_balance + unrealized_total, 2)
+    used_margin = round(sum(trade.margin_usdt for trade in open_trades), 2)
 
     return {
-        "account_balance": settings.paper_account_balance,
+        "initial_balance": initial_balance,
+        "account_balance": account_balance,
+        "equity": equity,
         "margin_per_trade": settings.paper_margin_per_trade,
         "leverage": settings.paper_leverage,
         "fee_rate": settings.paper_fee_rate,
         "min_opportunity_score": settings.paper_min_opportunity_score,
         "open_trades": len(open_trades),
         "closed_trades": len(closed_trades),
-        "used_margin": round(sum(trade.margin_usdt for trade in open_trades), 2),
+        "used_margin": used_margin,
+        "available_margin": round(account_balance - used_margin, 2),
         "open_notional": round(open_notional, 2),
         "realized_pnl": round(realized_total, 2),
         "unrealized_pnl": round(unrealized_total, 2),
         "total_pnl": round(total_pnl, 2),
         "total_fees": round(total_fees, 2),
-        "total_pnl_percent": round(total_pnl / settings.paper_account_balance * 100, 2) if settings.paper_account_balance else 0,
+        "realized_pnl_percent": round(realized_total / initial_balance * 100, 2) if initial_balance else 0,
+        "equity_pnl_percent": round((equity - initial_balance) / initial_balance * 100, 2) if initial_balance else 0,
+        "total_pnl_percent": round(total_pnl / initial_balance * 100, 2) if initial_balance else 0,
         "daily_pnl": round(period_pnl(closed_trades, now - timedelta(days=1)) + unrealized_total, 2),
         "seven_day_pnl": round(period_pnl(closed_trades, now - timedelta(days=7)) + unrealized_total, 2),
         "thirty_day_pnl": round(period_pnl(closed_trades, now - timedelta(days=30)) + unrealized_total, 2),
@@ -173,7 +189,11 @@ def build_equity_curve(db: Session, days: int = 30) -> list[dict[str, float | st
     unrealized_total = sum(trade.pnl_usdt for trade in open_trades)
 
     points = []
-    cumulative_realized = 0.0
+    cumulative_realized = sum(
+        trade.pnl_usdt
+        for trade in closed_trades
+        if normalize_datetime(trade.closed_at).date() < start
+    )
     for offset in range(max(1, days)):
         current_date = start + timedelta(days=offset)
         day_realized = sum(
@@ -204,7 +224,7 @@ def record_daily_snapshot(db: Session, snapshot_date: str | None = None) -> Pape
         db.add(snapshot)
 
     snapshot.account_balance = summary["account_balance"]
-    snapshot.equity = round(summary["account_balance"] + summary["total_pnl"], 2)
+    snapshot.equity = summary["equity"]
     snapshot.total_pnl = summary["total_pnl"]
     snapshot.realized_pnl = summary["realized_pnl"]
     snapshot.unrealized_pnl = summary["unrealized_pnl"]

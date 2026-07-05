@@ -57,7 +57,9 @@ export type OhlcCandle = {
 };
 
 export type PaperTradingSummary = {
+  initial_balance: number;
   account_balance: number;
+  equity: number;
   margin_per_trade: number;
   leverage: number;
   fee_rate: number;
@@ -65,11 +67,14 @@ export type PaperTradingSummary = {
   open_trades: number;
   closed_trades: number;
   used_margin: number;
+  available_margin: number;
   open_notional: number;
   realized_pnl: number;
   unrealized_pnl: number;
   total_pnl: number;
   total_fees: number;
+  realized_pnl_percent: number;
+  equity_pnl_percent: number;
   total_pnl_percent: number;
   daily_pnl: number;
   seven_day_pnl: number;

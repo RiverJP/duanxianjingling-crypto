@@ -12,7 +12,7 @@ export default async function PaperTradingPage() {
   const [summary, trades, equityCurve, schedulerStatus] = await Promise.all([getPaperTradingSummary(), getPaperTrades(), getEquityCurve(30), getSchedulerStatus()]);
   const openTrades = trades.filter((trade) => trade.status === "open");
   const floatingPnlPercent = summary.used_margin > 0 ? (summary.unrealized_pnl / summary.used_margin) * 100 : 0;
-  const availableMargin = summary.account_balance - summary.used_margin;
+  const availableMargin = summary.available_margin ?? summary.account_balance - summary.used_margin;
   const marginUsagePercent = summary.account_balance > 0 ? (summary.used_margin / summary.account_balance) * 100 : 0;
   const positionRatio = summary.account_balance > 0 ? (summary.open_notional / summary.account_balance) * 100 : 0;
   const feeRatePercent = (summary.fee_rate * 100).toFixed(2);
@@ -25,7 +25,7 @@ export default async function PaperTradingPage() {
           <p className="text-sm font-medium uppercase tracking-wide text-ink/50">模拟观察</p>
           <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">10000U 模拟仓位验证</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/60">
-            模拟开仓按 v5 精选指标策略执行：先更新 15m/1H/4H K 线，再要求 1H/4H 同向、日线结构确认和计划盈亏比筛选。计划盈亏比 &gt;= 1.5:1 时才开模拟单。每单保证金 {formatCurrency(summary.margin_per_trade)}，{summary.leverage} 倍杠杆；总保证金不超过模拟本金，盈亏已扣 {feeRatePercent}% 手续费磨损。
+            模拟开仓按 v5 精选指标策略执行：先更新 15m/1H/4H K 线，再要求 1H/4H 同向、日线结构确认和计划盈亏比筛选。计划盈亏比 &gt;= 1.5:1 时才开模拟单。每单保证金 {formatCurrency(summary.margin_per_trade)}，{summary.leverage} 倍杠杆；总保证金不超过当前本金，止盈止损平仓后本金会滚动更新，盈亏已扣 {feeRatePercent}% 手续费磨损。
           </p>
         </section>
 
@@ -41,14 +41,17 @@ export default async function PaperTradingPage() {
               </p>
             </div>
             <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-              <HighlightStat label="总资金" value={formatCurrency(summary.account_balance)} />
+              <HighlightStat label="初始本金" value={formatCurrency(summary.initial_balance ?? 10000)} />
+              <HighlightStat label="当前本金" value={formatCurrency(summary.account_balance)} tone={summary.realized_pnl >= 0 ? "mint" : "coral"} />
+              <HighlightStat label="当前权益" value={formatCurrency(summary.equity ?? summary.account_balance + summary.unrealized_pnl)} tone={(summary.equity ?? summary.account_balance + summary.unrealized_pnl) >= (summary.initial_balance ?? 10000) ? "mint" : "coral"} />
               <HighlightStat label="当前持仓" value={`${summary.open_trades} 笔`} />
               <HighlightStat label="总仓位" value={formatCurrency(summary.open_notional)} />
               <HighlightStat label="仓位占本金" value={`${positionRatio.toFixed(2)}%`} />
               <HighlightStat label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} />
               <HighlightStat label="剩余可用" value={formatCurrency(availableMargin)} tone={availableMargin >= 0 ? "mint" : "coral"} />
+              <HighlightStat label="已实现盈亏" value={formatCurrency(summary.realized_pnl)} tone={summary.realized_pnl >= 0 ? "mint" : "coral"} />
               <HighlightStat label="累计盈亏" value={formatCurrency(summary.total_pnl)} tone={summary.total_pnl >= 0 ? "mint" : "coral"} />
-              <HighlightStat label="占总资金" value={`${summary.total_pnl_percent >= 0 ? "+" : ""}${summary.total_pnl_percent}%`} tone={summary.total_pnl >= 0 ? "mint" : "coral"} />
+              <HighlightStat label="占初始本金" value={`${summary.total_pnl_percent >= 0 ? "+" : ""}${summary.total_pnl_percent}%`} tone={summary.total_pnl >= 0 ? "mint" : "coral"} />
               <HighlightStat label="已用保证金" value={formatCurrency(summary.used_margin)} />
               <HighlightStat label="手续费磨损" value={formatCurrency(summary.total_fees)} tone="coral" />
             </div>
@@ -56,7 +59,8 @@ export default async function PaperTradingPage() {
         </section>
 
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
-          <MetricCard label="模拟本金" value={formatCurrency(summary.account_balance)} />
+          <MetricCard label="初始本金" value={formatCurrency(summary.initial_balance ?? 10000)} />
+          <MetricCard label="当前本金" value={formatCurrency(summary.account_balance)} accent={summary.realized_pnl >= 0 ? "mint" : "coral"} />
           <MetricCard label="已用保证金" value={formatCurrency(summary.used_margin)} />
           <MetricCard label="总名义仓位" value={formatCurrency(summary.open_notional)} accent="gold" />
           <MetricCard label="仓位占本金" value={`${positionRatio.toFixed(2)}%`} />
@@ -84,7 +88,7 @@ export default async function PaperTradingPage() {
               <p className="mt-1 text-sm text-ink/55">近 30 天权益变化，包含已平仓收益和当前浮动盈亏。</p>
             </div>
             <p className={`text-sm font-semibold ${summary.total_pnl >= 0 ? "text-mint" : "text-coral"}`}>
-              当前权益 {formatCurrency(summary.account_balance + summary.total_pnl)}
+              当前权益 {formatCurrency(summary.equity ?? summary.account_balance + summary.unrealized_pnl)}
             </p>
           </div>
           <EquityCurveChart points={equityCurve} />
@@ -139,7 +143,7 @@ export default async function PaperTradingPage() {
             <h2 className="mb-4 text-lg font-semibold">规则说明</h2>
             <div className="space-y-3 text-sm leading-6 text-ink/70">
               <p>开单条件：v5 精选指标策略触发做多/做空，1H/4H 必须同向，计划盈亏比 &gt;= 1.5:1，并且系统已经给出止盈止损。</p>
-              <p>开单资金：模拟账户 {formatCurrency(summary.account_balance)}，每次使用 {formatCurrency(summary.margin_per_trade)} 保证金，{summary.leverage} 倍杠杆；总保证金最多用满本金，不会超开。</p>
+              <p>开单资金：初始本金 {formatCurrency(summary.initial_balance ?? 10000)}，当前本金 {formatCurrency(summary.account_balance)}；止盈止损平仓后会滚动增减本金。每次使用 {formatCurrency(summary.margin_per_trade)} 保证金，{summary.leverage} 倍杠杆；总保证金最多用满当前本金，不会超开。</p>
               <p>手续费：每笔按名义仓位 {feeRatePercent}% 估算磨损，当前页面的单笔和汇总盈亏均为扣费后净值。</p>
               <p>平仓条件：刷新时如果价格触达止盈或止损，则按当前刷新价格模拟平仓；15m 单最长持仓 7 天，到期仍未触发则到期平仓。</p>
               <p>用途：这个页面用于观察评分策略效果，不连接真实交易所，也不会真实下单。</p>

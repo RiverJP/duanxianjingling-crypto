@@ -20,7 +20,7 @@ export default async function DashboardPage() {
   const highPriorityCount = assets.filter((asset) => asset.opportunity_status === "高优先级" || asset.opportunity_status === "可关注").length;
   const totalVolume = assets.reduce((sum, asset) => sum + asset.volume_24h, 0);
   const floatingPnlPercent = paperSummary.used_margin > 0 ? (paperSummary.unrealized_pnl / paperSummary.used_margin) * 100 : 0;
-  const availableMargin = paperSummary.account_balance - paperSummary.used_margin;
+  const availableMargin = paperSummary.available_margin ?? paperSummary.account_balance - paperSummary.used_margin;
   const marginUsagePercent = paperSummary.account_balance > 0 ? (paperSummary.used_margin / paperSummary.account_balance) * 100 : 0;
   const notionalExposureRatio = paperSummary.account_balance > 0 ? (paperSummary.open_notional / paperSummary.account_balance) * 100 : 0;
   const perTradeNotional = paperSummary.margin_per_trade * paperSummary.leverage;
@@ -56,26 +56,29 @@ export default async function DashboardPage() {
                 {floatingPnlPercent >= 0 ? "+" : ""}{floatingPnlPercent.toFixed(2)}% / 按已用保证金计算
               </p>
               <p className="mt-3 text-sm leading-6 text-ink/65">
-                规则：先同步最新 15m/1H/4H K 线，再按 v5 精选指标策略筛选；方向为做多/做空、1H/4H 同向、计划盈亏比 &gt;= 1.5:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆；已用保证金不会超过总资金，盈亏已扣 {feeRatePercent}% 手续费磨损。
+                规则：先同步最新 15m/1H/4H K 线，再按 v5 精选指标策略筛选；方向为做多/做空、1H/4H 同向、计划盈亏比 &gt;= 1.5:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆；止盈止损平仓后会滚动更新当前本金，盈亏已扣 {feeRatePercent}% 手续费磨损。
               </p>
               {marginUsagePercent > 100 ? (
                 <p className="mt-2 text-sm leading-6 text-coral">
-                  当前已用保证金超过模拟本金，说明现有未平仓模拟持仓已经超额占用资金；这里仅展示持仓现状，不会自动清仓或改动持仓数据。
+                  当前已用保证金超过当前本金，说明现有未平仓模拟持仓已经超额占用资金；这里仅展示持仓现状，不会自动清仓或改动持仓数据。
                 </p>
               ) : null}
             </div>
             <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-              <HomePnlStat label="总资金" value={formatCurrency(paperSummary.account_balance)} hint="模拟本金" />
-              <HomePnlStat label="可用资金" value={formatCurrency(availableMargin)} hint="总资金 - 已用保证金" tone={availableMargin >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="初始本金" value={formatCurrency(paperSummary.initial_balance ?? 10000)} hint="模拟起始本金" />
+              <HomePnlStat label="当前本金" value={formatCurrency(paperSummary.account_balance)} hint="初始本金 + 已实现盈亏" tone={paperSummary.realized_pnl >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="当前权益" value={formatCurrency(paperSummary.equity ?? paperSummary.account_balance + paperSummary.unrealized_pnl)} hint="当前本金 + 未实现盈亏" tone={(paperSummary.equity ?? paperSummary.account_balance + paperSummary.unrealized_pnl) >= (paperSummary.initial_balance ?? 10000) ? "mint" : "coral"} />
+              <HomePnlStat label="可用保证金" value={formatCurrency(availableMargin)} hint="当前本金 - 已用保证金" tone={availableMargin >= 0 ? "mint" : "coral"} />
               <HomePnlStat label="已用保证金" value={formatCurrency(paperSummary.used_margin)} hint="真实占用本金" />
-              <HomePnlStat label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} hint="已用保证金 / 总资金" />
+              <HomePnlStat label="保证金使用率" value={`${marginUsagePercent.toFixed(2)}%`} hint="已用保证金 / 当前本金" />
               <HomePnlStat label="名义仓位" value={formatCurrency(paperSummary.open_notional)} hint="保证金 × 杠杆后的敞口" />
               <HomePnlStat label="名义仓位 / 本金" value={`${notionalExposureRatio.toFixed(2)}%`} hint="敞口大小，不是本金占用" />
               <HomePnlStat label="当前浮盈亏" value={formatCurrency(paperSummary.unrealized_pnl)} hint="未平仓持仓盈亏" tone={paperSummary.unrealized_pnl >= 0 ? "mint" : "coral"} />
               <HomePnlStat label="持仓笔数" value={`${paperSummary.open_trades} 笔`} hint={`每笔名义 ${formatCurrency(perTradeNotional)}`} />
+              <HomePnlStat label="已实现盈亏" value={formatCurrency(paperSummary.realized_pnl)} hint="已平仓止盈/止损/到期" tone={paperSummary.realized_pnl >= 0 ? "mint" : "coral"} />
               <HomePnlStat label="累计盈亏" value={formatCurrency(paperSummary.total_pnl)} hint="已实现 + 未实现" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
               <HomePnlStat label="手续费磨损" value={formatCurrency(paperSummary.total_fees)} hint={`${feeRatePercent}% × 每笔名义仓位`} tone="coral" />
-              <HomePnlStat label="累计收益率" value={`${paperSummary.total_pnl_percent >= 0 ? "+" : ""}${paperSummary.total_pnl_percent}%`} hint="累计盈亏 / 总资金" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
+              <HomePnlStat label="累计收益率" value={`${paperSummary.total_pnl_percent >= 0 ? "+" : ""}${paperSummary.total_pnl_percent}%`} hint="累计盈亏 / 初始本金" tone={paperSummary.total_pnl >= 0 ? "mint" : "coral"} />
               <Link href="/paper" className="rounded border border-ink/10 bg-white/80 p-3 hover:bg-white sm:p-4">
                 <p className="text-xs font-medium text-ink/50">模拟详情</p>
                 <p className="mt-2 text-xl font-semibold text-ink sm:text-2xl">查看</p>

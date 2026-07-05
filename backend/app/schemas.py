@@ -93,7 +93,9 @@ class PaperTradeOut(BaseModel):
 
 
 class PaperTradingSummaryOut(BaseModel):
+    initial_balance: float = 10000
     account_balance: float
+    equity: float = 10000
     margin_per_trade: float
     leverage: int
     fee_rate: float
@@ -101,11 +103,14 @@ class PaperTradingSummaryOut(BaseModel):
     open_trades: int
     closed_trades: int
     used_margin: float
+    available_margin: float = 0
     open_notional: float
     realized_pnl: float
     unrealized_pnl: float
     total_pnl: float
     total_fees: float
+    realized_pnl_percent: float = 0
+    equity_pnl_percent: float = 0
     total_pnl_percent: float
     daily_pnl: float
     seven_day_pnl: float
