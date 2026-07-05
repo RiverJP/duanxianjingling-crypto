@@ -22,7 +22,7 @@ export function RefreshCadence({ status, compact = false }: { status: SchedulerS
         <div>
           <h2 className="text-sm font-semibold text-ink">数据刷新节奏</h2>
           <p className="mt-1 text-xs leading-5 text-ink/55">
-            后台分层刷新：先更新市场与 15m/1H/4H K 线，再按 v6.1 确认指标策略刷新首页机会和模拟持仓。
+            后台分层刷新：先更新市场与 15m/1H/4H K 线，再按 v6.2 确认指标策略刷新首页机会和模拟持仓。
           </p>
         </div>
       </div>

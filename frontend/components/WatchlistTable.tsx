@@ -33,7 +33,7 @@ export function WatchlistTable({ assets }: { assets: Asset[] }) {
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <MobileStat label="机会分" value={`${asset.opportunity_score}/100`} strong />
-              <MobileStat label="v6计划盈亏比" value={formatRiskReward(asset.risk_reward_ratio)} strong tone={asset.risk_reward_ratio && asset.risk_reward_ratio >= 1.8 ? "mint" : "ink"} />
+              <MobileStat label="v6计划盈亏比" value={formatRiskReward(asset.risk_reward_ratio)} strong tone={asset.risk_reward_ratio && asset.risk_reward_ratio >= 1.3 ? "mint" : "ink"} />
               <MobileStat label="价格" value={formatCurrency(asset.current_price)} />
               <MobileStat label="24小时" value={formatPercent(asset.change_24h)} tone={asset.change_24h >= 0 ? "mint" : "coral"} />
               <MobileStat label="成交量" value={formatCompactCurrency(asset.volume_24h)} />

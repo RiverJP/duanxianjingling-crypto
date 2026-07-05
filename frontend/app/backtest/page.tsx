@@ -63,7 +63,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
             <span className="font-semibold text-ink">v6</span>
-            <span className="text-xs text-ink/45">2026-07-04v6.1-confirmed</span>
+            <span className="text-xs text-ink/45">2026-07-04v6.2-risk-adjusted</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
@@ -124,7 +124,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
               ) : null}
               {summary.excluded_low_risk_reward_trades > 0 ? (
                 <p className="mt-2 text-xs leading-5 text-ink/55">
-                  已排除 {summary.excluded_low_risk_reward_trades} 笔计划盈亏比低于 1.8:1 的交易。
+                  已排除 {summary.excluded_low_risk_reward_trades} 笔计划盈亏比低于 1.3:1 的交易。
                 </p>
               ) : null}
               {summary.excluded_portfolio_trades > 0 ? (
@@ -406,7 +406,7 @@ function normalizeVersion(value?: string): string {
 }
 
 function isActiveVersionRun(run: BacktestRun): boolean {
-  return run.strategy_version === "v6" || run.strategy_version === "2026-07-04v6.1-confirmed";
+  return run.strategy_version === "v6" || run.strategy_version === "2026-07-04v6.2-risk-adjusted";
 }
 
 function formatInterval(value: string): string {

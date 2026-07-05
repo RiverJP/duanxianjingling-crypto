@@ -27,10 +27,12 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v6.1-confirmed"
+BACKTEST_STRATEGY_VERSION = "2026-07-04v6.2-risk-adjusted"
 STRICT_MIN_QUALITY_SCORE = 90
 BASE_INDICATOR_QUALITY = 62
-MIN_BACKTEST_RISK_REWARD_RATIO = 1.8
+MIN_BACKTEST_RISK_REWARD_RATIO = 1.3
+TREND_TARGET_RISK_REWARD_RATIO = 1.5
+RANGE_TARGET_RISK_REWARD_RATIO = 1.3
 MIN_VOLUME_TO_CAP_RATIO = 0.03
 MAX_DAILY_TRADES_PER_ASSET = 1
 MAX_STRUCTURE_STOP_DISTANCE_RATIO = 0.05
@@ -307,8 +309,8 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             f"只有支撑/阻力距离开仓价不超过 {MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}% 时，才允许作为结构止损；距离太远则回退为波幅止损。",
         ],
         "take_profit_logic": [
-            "趋势单默认盈亏比约 2.0:1。",
-            "区间单默认盈亏比约 1.8:1。",
+            f"趋势单默认盈亏比约 {TREND_TARGET_RISK_REWARD_RATIO:.1f}:1。",
+            f"区间单默认盈亏比约 {RANGE_TARGET_RISK_REWARD_RATIO:.1f}:1。",
             "止盈价基于最终止损距离重新计算，避免结构止损过远时出现低盈亏比单。",
             "区间多的止盈会参考上方阻力；区间空的止盈会参考下方支撑。",
         ],
@@ -327,7 +329,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "趋势线：使用最近 60 根观察周期 K 线和 EMA 排列判断方向。",
             "结构：近 45 根日线聚合 K 线检测双底/双顶。",
             "支撑阻力：近 30 根日线聚合 K 线低点为支撑，高点为阻力。",
-            f"量价关系：v6.1 不再只看 24h 成交额 / 市值；若15m K线有成交量，信号K线成交量必须达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上；历史K线无成交量时不直接过滤，但不给放量加分。",
+            f"量价关系：v6.2 不再只看 24h 成交额 / 市值；若15m K线有成交量，信号K线成交量必须达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上；历史K线无成交量时不直接过滤，但不给放量加分。",
             f"15m确认：做多要求收阳、重新站回EMA20或突破近6根高点，并且不是近16根涨幅超过 {MAX_15M_CHASE_MOVE_RATIO * 100:.0f}% 的追涨；做空反向处理。",
             f"波动过滤：近20根15m平均振幅超过价格 {MAX_15M_AVERAGE_RANGE_RATIO * 100:.1f}% 的标的暂不交易，避免小币脏波动反复扫损。",
         ],
@@ -499,7 +501,7 @@ def backtest_asset(
             continue
 
         entry_reasons = list(plan.get("entry_reasons") or [])
-        entry_reasons.append("v6.1确认回测：1H/4H同向，15m确认K线收盘后确认，下一根15m K线开盘价成交")
+        entry_reasons.append("v6.2确认回测：1H/4H同向，15m确认K线收盘后确认，下一根15m K线开盘价成交")
         indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
         indicator_snapshot["signal_price"] = round_price(close)
         indicator_snapshot["entry_price"] = round_price(entry_price)
@@ -974,7 +976,7 @@ def build_indicator_snapshot(
             f"信号K成交量/近20根均量={signal_volume_multiple:.2f}倍，最低要求>={MIN_SIGNAL_VOLUME_MULTIPLE:.2f}倍。"
         ),
         "execution_confirmation_detail": f"15m EMA20={format_optional_level(execution_ema20)}，EMA50={format_optional_level(execution_ema50)}；近16根涨跌={recent_move_ratio * 100:.2f}%，近20根平均振幅={average_range_ratio * 100:.2f}%。",
-        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6.1确认口径会在信号K线收盘后，以下一根15m开盘价成交。",
+        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6.2确认口径会在信号K线收盘后，以下一根15m开盘价成交。",
         "entry_reason_detail": "；".join(entry_reasons),
     }
 
@@ -1056,7 +1058,7 @@ def build_indicator_exit_prices(
 
     average_range = sum(float(row["high"]) - float(row["low"]) for row in recent) / len(recent)
     stop_distance = max(average_range * 1.6, price * 0.012)
-    reward_multiple = 2.0 if strategy_type in {"趋势多", "趋势空"} else 1.8
+    reward_multiple = TREND_TARGET_RISK_REWARD_RATIO if strategy_type in {"趋势多", "趋势空"} else RANGE_TARGET_RISK_REWARD_RATIO
 
     support = market_context.get("support")
     resistance = market_context.get("resistance")
