@@ -40,7 +40,7 @@ export default async function DashboardPage() {
             从市场前排标的里自动发现短线机会
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink/60">
-            短线精灵默认扫描{universeLabel}，首页机会使用 v5 精选指标策略：15m 执行开单，1H/4H 必须同向，日线结构确认，并按计划盈亏比筛掉低质量交易。
+            短线精灵默认扫描{universeLabel}，首页机会使用 v6 确认指标策略：15m 执行开单，1H/4H 必须同向，日线结构和15m确认K线同时满足，并按计划盈亏比筛掉低质量交易。
           </p>
           <p className="mt-2 text-xs text-ink/45">首页最后刷新：{latestRefresh}</p>
         </section>
@@ -56,7 +56,7 @@ export default async function DashboardPage() {
                 {floatingPnlPercent >= 0 ? "+" : ""}{floatingPnlPercent.toFixed(2)}% / 按已用保证金计算
               </p>
               <p className="mt-3 text-sm leading-6 text-ink/65">
-                规则：先同步最新 15m/1H/4H K 线，再按 v5 精选指标策略筛选；方向为做多/做空、1H/4H 同向、计划盈亏比 &gt;= 1.5:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆；止盈止损平仓后会滚动更新当前本金，盈亏已扣 {feeRatePercent}% 手续费磨损。
+                规则：先同步最新 15m/1H/4H K 线，再按 v6 确认指标策略筛选；方向为做多/做空、1H/4H 同向、15m确认K线放量、计划盈亏比 &gt;= 1.8:1 且有止盈止损时自动进入模拟开单。每单保证金 {formatCurrency(paperSummary.margin_per_trade)}，{paperSummary.leverage} 倍杠杆；止盈止损平仓后会滚动更新当前本金，盈亏已扣 {feeRatePercent}% 手续费磨损。
               </p>
               {marginUsagePercent > 100 ? (
                 <p className="mt-2 text-sm leading-6 text-coral">
@@ -139,7 +139,7 @@ export default async function DashboardPage() {
               </div>
             ) : (
               <p className="text-sm text-ink/60">
-                当前没有模拟持仓。下一次刷新后，满足 v5 精选指标策略、1H/4H 同向且计划盈亏比 &gt;= 1.5:1 的标的会自动进入模拟开单。
+                当前没有模拟持仓。下一次刷新后，满足 v6 确认指标策略、1H/4H 同向、15m确认K线放量且计划盈亏比 &gt;= 1.8:1 的标的会自动进入模拟开单。
               </p>
             )}
           </div>
@@ -158,8 +158,8 @@ export default async function DashboardPage() {
 
         <section className="mt-8">
           <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="text-xl font-semibold">v5 市场机会列表</h2>
-            {leader ? <p className="text-sm text-ink/55">当前首选 {leader.symbol}，v5机会分 {leader.opportunity_score}/100，价格 {formatCurrency(leader.current_price)}</p> : null}
+            <h2 className="text-xl font-semibold">v6 市场机会列表</h2>
+            {leader ? <p className="text-sm text-ink/55">当前首选 {leader.symbol}，v6机会分 {leader.opportunity_score}/100，价格 {formatCurrency(leader.current_price)}</p> : null}
           </div>
           {assets.length ? (
             <div className="overflow-x-auto">
