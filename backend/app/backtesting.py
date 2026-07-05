@@ -27,16 +27,16 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v6-confirmed"
-STRICT_MIN_QUALITY_SCORE = 92
+BACKTEST_STRATEGY_VERSION = "2026-07-04v6.1-confirmed"
+STRICT_MIN_QUALITY_SCORE = 90
 BASE_INDICATOR_QUALITY = 62
 MIN_BACKTEST_RISK_REWARD_RATIO = 1.8
 MIN_VOLUME_TO_CAP_RATIO = 0.03
 MAX_DAILY_TRADES_PER_ASSET = 1
 MAX_STRUCTURE_STOP_DISTANCE_RATIO = 0.05
-MAX_15M_AVERAGE_RANGE_RATIO = 0.035
-MAX_15M_CHASE_MOVE_RATIO = 0.08
-MIN_SIGNAL_VOLUME_MULTIPLE = 1.15
+MAX_15M_AVERAGE_RANGE_RATIO = 0.045
+MAX_15M_CHASE_MOVE_RATIO = 0.10
+MIN_SIGNAL_VOLUME_MULTIPLE = 1.10
 BACKTEST_FEE_RATE = 0.0012
 
 
@@ -327,7 +327,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "趋势线：使用最近 60 根观察周期 K 线和 EMA 排列判断方向。",
             "结构：近 45 根日线聚合 K 线检测双底/双顶。",
             "支撑阻力：近 30 根日线聚合 K 线低点为支撑，高点为阻力。",
-            f"量价关系：v6 不再只看 24h 成交额 / 市值；若15m K线有成交量，信号K线成交量必须达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上。",
+            f"量价关系：v6.1 不再只看 24h 成交额 / 市值；若15m K线有成交量，信号K线成交量必须达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上；历史K线无成交量时不直接过滤，但不给放量加分。",
             f"15m确认：做多要求收阳、重新站回EMA20或突破近6根高点，并且不是近16根涨幅超过 {MAX_15M_CHASE_MOVE_RATIO * 100:.0f}% 的追涨；做空反向处理。",
             f"波动过滤：近20根15m平均振幅超过价格 {MAX_15M_AVERAGE_RANGE_RATIO * 100:.1f}% 的标的暂不交易，避免小币脏波动反复扫损。",
         ],
@@ -499,7 +499,7 @@ def backtest_asset(
             continue
 
         entry_reasons = list(plan.get("entry_reasons") or [])
-        entry_reasons.append("v6确认回测：1H/4H同向，15m确认K线收盘后确认，下一根15m K线开盘价成交")
+        entry_reasons.append("v6.1确认回测：1H/4H同向，15m确认K线收盘后确认，下一根15m K线开盘价成交")
         indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
         indicator_snapshot["signal_price"] = round_price(close)
         indicator_snapshot["entry_price"] = round_price(entry_price)
@@ -799,12 +799,11 @@ def build_execution_confirmation(
         for row in rows[max(0, index - 20): index + 1]
         if float(row.get("volume") or 0) > 0
     ]
-    if len(volume_rows) < 12:
-        return None
+    has_volume_confirmation = len(volume_rows) >= 12
     signal_volume = float(signal_row.get("volume") or 0)
-    average_volume = sum(volume_rows[:-1]) / max(1, len(volume_rows) - 1)
+    average_volume = sum(volume_rows[:-1]) / max(1, len(volume_rows) - 1) if has_volume_confirmation else 0
     volume_multiple = signal_volume / average_volume if average_volume > 0 else 0
-    if volume_multiple < MIN_SIGNAL_VOLUME_MULTIPLE:
+    if has_volume_confirmation and volume_multiple < MIN_SIGNAL_VOLUME_MULTIPLE:
         return None
 
     reasons: list[str] = []
@@ -834,11 +833,14 @@ def build_execution_confirmation(
     else:
         return None
 
-    reasons.append(f"信号K线成交量约为近20根均量的 {volume_multiple:.2f} 倍，达到真实放量确认")
+    if has_volume_confirmation:
+        reasons.append(f"信号K线成交量约为近20根均量的 {volume_multiple:.2f} 倍，达到真实放量确认")
+    else:
+        reasons.append("历史15m K线未保存完整成交量，本次仅使用价格确认，不给放量加分")
     reasons.append(f"近20根15m平均振幅约为价格的 {average_range_ratio * 100:.2f}%，未超过脏波动过滤阈值")
     if abs(recent_move) <= MAX_15M_CHASE_MOVE_RATIO * 0.6:
         quality_bonus += 2
-    if volume_multiple >= MIN_SIGNAL_VOLUME_MULTIPLE * 1.5:
+    if has_volume_confirmation and volume_multiple >= MIN_SIGNAL_VOLUME_MULTIPLE * 1.5:
         quality_bonus += 2
     if average_range_ratio <= MAX_15M_AVERAGE_RANGE_RATIO * 0.65:
         quality_bonus += 1
@@ -846,6 +848,7 @@ def build_execution_confirmation(
     return {
         "quality_bonus": quality_bonus,
         "volume_multiple": volume_multiple,
+        "has_volume_confirmation": has_volume_confirmation,
         "average_range_ratio": average_range_ratio,
         "recent_move_ratio": recent_move,
         "ema20": ema20,
@@ -922,6 +925,7 @@ def build_indicator_snapshot(
     fib_resistances = [round_optional_price(level) for level in market_context.get("fib_resistances", [])]
     confirmation = execution_confirmation or {}
     signal_volume_multiple = float(confirmation.get("volume_multiple") or 0)
+    has_volume_confirmation = bool(confirmation.get("has_volume_confirmation"))
     average_range_ratio = float(confirmation.get("average_range_ratio") or 0)
     recent_move_ratio = float(confirmation.get("recent_move_ratio") or 0)
     execution_ema20 = round_optional_price(confirmation.get("ema20"))
@@ -950,6 +954,7 @@ def build_indicator_snapshot(
         "double_top": bool(market_context.get("double_top")),
         "volume_to_market_cap_percent": round(volume_to_cap * 100, 2),
         "signal_volume_multiple": round(signal_volume_multiple, 2),
+        "has_volume_confirmation": has_volume_confirmation,
         "execution_average_range_percent": round(average_range_ratio * 100, 2),
         "execution_recent_move_percent": round(recent_move_ratio * 100, 2),
         "execution_ema20": execution_ema20,
@@ -963,9 +968,13 @@ def build_indicator_snapshot(
         "fib_detail": f"斐波支撑={format_level_list(fib_supports)}；斐波阻力={format_level_list(fib_resistances)}；靠近支撑={format_bool(market_context.get('near_fib_support'))}，靠近阻力={format_bool(market_context.get('near_fib_resistance'))}。",
         "support_resistance_detail": f"日线支撑={format_optional_level(support)}，日线阻力={format_optional_level(resistance)}；靠近支撑={format_bool(market_context.get('near_support'))}，靠近阻力={format_bool(market_context.get('near_resistance'))}。",
         "structure_detail": f"双底={format_bool(market_context.get('double_bottom'))}，双顶={format_bool(market_context.get('double_top'))}。",
-        "volume_filter_detail": f"24h成交额/市值={volume_to_cap * 100:.2f}%，仅作流动性参考；15m信号K成交量/近20根均量={signal_volume_multiple:.2f}倍，最低要求>={MIN_SIGNAL_VOLUME_MULTIPLE:.2f}倍。",
+        "volume_filter_detail": (
+            f"24h成交额/市值={volume_to_cap * 100:.2f}%，仅作流动性参考；"
+            f"15m成交量确认={'有' if has_volume_confirmation else '无'}，"
+            f"信号K成交量/近20根均量={signal_volume_multiple:.2f}倍，最低要求>={MIN_SIGNAL_VOLUME_MULTIPLE:.2f}倍。"
+        ),
         "execution_confirmation_detail": f"15m EMA20={format_optional_level(execution_ema20)}，EMA50={format_optional_level(execution_ema50)}；近16根涨跌={recent_move_ratio * 100:.2f}%，近20根平均振幅={average_range_ratio * 100:.2f}%。",
-        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6确认口径会在信号K线收盘后，以下一根15m开盘价成交。",
+        "risk_plan_detail": f"止损={round_price(stop_loss)}，止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6.1确认口径会在信号K线收盘后，以下一根15m开盘价成交。",
         "entry_reason_detail": "；".join(entry_reasons),
     }
 

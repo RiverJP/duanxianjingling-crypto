@@ -310,7 +310,7 @@ function StrategyFramework({ asset, context }: { asset: Asset; context: Strategy
           </div>
           <p className="mt-3 text-2xl font-semibold">{context.preferredDirection}</p>
           <p className="mt-2 text-sm leading-6 text-ink/65">
-            {context.dailyRegime} · {context.strategyType}。这里展示后台 v6 确认指标策略当前保存的方向、结构和风控结论，和上方交易方向保持同一套口径。
+            {context.dailyRegime} · {context.strategyType}。这里展示后台 v6.1 确认指标策略当前保存的方向、结构和风控结论，和上方交易方向保持同一套口径。
           </p>
           <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
             <DecisionBadge label="做多条件" passed={context.longAllowed} />
@@ -353,7 +353,7 @@ function buildStrategyContext(asset: Asset, candles: OhlcCandle[]): StrategyCont
   const current = asset.current_price || candles.at(-1)?.close || 0;
   const dailyRegime = asset.market_cycle && asset.market_cycle !== "数据不足" ? asset.market_cycle : "等待K线结构确认";
   const preferredDirection = asset.trade_signal === "做多" ? "当前策略做多" : asset.trade_signal === "做空" ? "当前策略做空" : "当前观望";
-  const strategyType = extractStrategyType(asset.opportunity_reason) || extractStrategyType(asset.trade_rationale) || (asset.trade_signal === "观望" ? "未触发v6开仓" : "v6确认指标策略");
+  const strategyType = extractStrategyType(asset.opportunity_reason) || extractStrategyType(asset.trade_rationale) || (asset.trade_signal === "观望" ? "未触发v6.1开仓" : "v6.1确认指标策略");
   const support = asset.support_level;
   const resistance = asset.resistance_level;
   const fibText = fibLevelsText(asset);
@@ -419,7 +419,7 @@ function fibLevelsText(asset: Asset): string {
 function buildSavedStrategyReasons(asset: Asset): string[] {
   const source = asset.opportunity_reason || asset.trade_rationale;
   if (!source) {
-    return ["等待 v6 确认指标策略刷新。"];
+    return ["等待 v6.1 确认指标策略刷新。"];
   }
   const cleaned = source.replace(/^v[356](?:精选|确认)?指标策略[:：][^。]*。?/, "");
   const items = cleaned.split(/[；。]/).map((item) => item.trim()).filter(Boolean);

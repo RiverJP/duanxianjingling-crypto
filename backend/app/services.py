@@ -1094,7 +1094,7 @@ def build_live_indicator_trade_plan(db: Session, asset: AssetSnapshot) -> dict[s
     market_context = build_daily_market_context(daily_rows, timestamp, price)
     apply_live_indicator_context(asset, market_context, price, one_hour_rows, four_hour_rows, timestamp)
     if market_context.get("regime") == "数据不足":
-        return build_live_empty_plan("v6 确认指标策略数据不足，暂不进入模拟开仓。", price)
+        return build_live_empty_plan("v6.1 确认指标策略数据不足，暂不进入模拟开仓。", price)
 
     plan = build_indicator_trade_plan(
         asset,
@@ -1106,7 +1106,7 @@ def build_live_indicator_trade_plan(db: Session, asset: AssetSnapshot) -> dict[s
         market_context,
     )
     if not plan:
-        return build_live_empty_plan("v6 确认指标策略未满足1H/4H同向、日线结构、15m确认、真实放量、波动、质量分或盈亏比过滤，当前观望。", price)
+        return build_live_empty_plan("v6.1 确认指标策略未满足1H/4H同向、日线结构、15m确认、真实放量、波动、质量分或盈亏比过滤，当前观望。", price)
 
     signal = str(plan["trade_signal"])
     score = int(plan["opportunity_score"])
@@ -1125,7 +1125,7 @@ def build_live_indicator_trade_plan(db: Session, asset: AssetSnapshot) -> dict[s
         "opportunity_type": signal,
         "trigger_price": plan["entry_price"],
         "invalid_price": plan["stop_loss"],
-        "opportunity_reason": f"v6确认指标策略：{strategy_type}。{reason_text}",
+        "opportunity_reason": f"v6.1确认指标策略：{strategy_type}。{reason_text}",
     }
 
 
@@ -1153,7 +1153,7 @@ def apply_live_indicator_context(
     asset.vegas_signal = live_channel_signal(price, market_context.get("ema144"), market_context.get("ema169"), "Vegas")
     asset.dt_signal = live_dt_signal(price, market_context.get("dt_upper"), market_context.get("dt_lower"))
     asset.volume_price_relation = live_candle_volume_relation(four_hour_rows)
-    asset.technical_note = "首页和模拟开仓已切换为 v6 确认指标策略：15m 执行，1H/4H 必须同向，日线结构和15m确认K线同时满足。"
+    asset.technical_note = "首页和模拟开仓已切换为 v6.1 确认指标策略：15m 执行，1H/4H 必须同向，日线结构和15m确认K线同时满足。"
 
 
 def build_live_empty_plan(rationale: str, price: float) -> dict[str, float | str | None]:
