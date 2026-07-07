@@ -45,6 +45,7 @@ BACKTEST_VERSION_ALIASES = {
     "v6": "2026-07-04v6.4-one-hour-primary",
     "v7": "2026-07-04v7-regime-split",
     "v7.1": "2026-07-04v7.1-fee-aware",
+    "v7.2": "2026-07-04v7.2-range-reward-250",
 }
 
 app.add_middleware(
