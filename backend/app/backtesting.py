@@ -27,18 +27,18 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v7-regime-split"
+BACKTEST_STRATEGY_VERSION = "2026-07-04v7.1-fee-aware"
 STRICT_MIN_QUALITY_SCORE = 78
-TREND_MIN_QUALITY_SCORE = 82
-RANGE_MIN_QUALITY_SCORE = 78
+TREND_MIN_QUALITY_SCORE = 84
+RANGE_MIN_QUALITY_SCORE = 84
 BASE_INDICATOR_QUALITY = 62
 MIN_BACKTEST_RISK_REWARD_RATIO = 1.2
 TREND_MIN_RISK_REWARD_RATIO = 1.1
-RANGE_MIN_RISK_REWARD_RATIO = 1.2
+RANGE_MIN_RISK_REWARD_RATIO = 1.5
 LIVE_INDICATOR_MIN_QUALITY_SCORE = 82
 LIVE_INDICATOR_MIN_RISK_REWARD_RATIO = 1.3
 TREND_TARGET_RISK_REWARD_RATIO = 1.5
-RANGE_TARGET_RISK_REWARD_RATIO = 1.3
+RANGE_TARGET_RISK_REWARD_RATIO = 1.5
 TREND_BREAKEVEN_RISK_MULTIPLE = 1.0
 TREND_TRAILING_RISK_MULTIPLE = 1.5
 TREND_TRAILING_SWING_LOOKBACK = 8
@@ -50,6 +50,9 @@ MAX_15M_AVERAGE_RANGE_RATIO = 0.045
 MAX_15M_CHASE_MOVE_RATIO = 0.10
 MIN_SIGNAL_VOLUME_MULTIPLE = 1.10
 BACKTEST_FEE_RATE = 0.0012
+BACKTEST_SYMBOL_COOLDOWN_SECONDS = 4 * 3600
+TREND_MIN_REWARD_FEE_MULTIPLE = 5.0
+RANGE_MIN_REWARD_FEE_MULTIPLE = 6.0
 
 
 def effective_min_quality_score(strategy_mode: str, configured_score: int) -> int:
@@ -294,19 +297,20 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
         "entry_conditions": [
             f"指标质量分：趋势单必须 >= {TREND_MIN_QUALITY_SCORE}，震荡单必须 >= {RANGE_MIN_QUALITY_SCORE}。",
             f"计划盈亏比：趋势单参考 >= {TREND_MIN_RISK_REWARD_RATIO:.1f}:1，震荡单固定 >= {RANGE_MIN_RISK_REWARD_RATIO:.1f}:1。",
+            f"手续费覆盖：趋势单计划止盈金额至少覆盖单笔手续费 {TREND_MIN_REWARD_FEE_MULTIPLE:.0f} 倍，震荡单至少覆盖 {RANGE_MIN_REWARD_FEE_MULTIPLE:.0f} 倍。",
             f"市值成交活跃度过滤：24h 成交额 / 市值 >= {MIN_VOLUME_TO_CAP_RATIO * 100:.1f}%。",
             "趋势单：1H 决定主方向，4H 不能明显反向，日线不能是明确反向趋势。",
             "震荡单：必须靠近日线/4H 支撑阻力、Fib 或双顶双底结构，不在区间中间开单。",
-            f"单个标的每天最多开 {MAX_DAILY_TRADES_PER_ASSET} 单，避免 15m 反复被同一波动扫损。",
+            f"单个标的每天最多开 {MAX_DAILY_TRADES_PER_ASSET} 单，且平仓后至少冷却 {BACKTEST_SYMBOL_COOLDOWN_SECONDS // 3600} 小时，避免 15m 反复被同一波动扫损。",
             "信号必须有可计算的止盈价和止损价，否则不允许开仓。",
         ],
         "long_logic": [
             "趋势多：1H 做多，4H 不做空，日线不处于下降趋势；15m 回踩EMA后收阳，或突破近6根高点。",
-            "区间多：靠近日线/4H 支撑、Fib支撑或双底结构；1H 不能强空；15m 出现止跌收阳或下影反转。",
+            "区间多：靠近日线/4H 支撑、Fib支撑或震荡里的双底结构；1H 不能强空；15m 必须重新站回EMA20或出现下影反转。",
         ],
         "short_logic": [
             "趋势空：1H 做空，4H 不做多，日线不处于上升趋势；15m 反抽EMA后收阴，或跌破近6根低点。",
-            "区间空：靠近日线/4H 阻力、Fib阻力或双顶结构；1H 不能强多；15m 出现滞涨收阴或上影反转。",
+            "区间空：靠近日线/4H 阻力、Fib阻力或震荡里的双顶结构；1H 不能强多；15m 必须跌回EMA20或出现上影反转。",
         ],
         "stop_loss_logic": [
             "基础止损距离取最近 20 根执行周期 K 线平均波幅 * 1.6。",
@@ -317,7 +321,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
         ],
         "take_profit_logic": [
             f"趋势单先生成 {TREND_TARGET_RISK_REWARD_RATIO:.1f}R 参考目标，但不把该目标作为硬止盈；趋势单到 {TREND_BREAKEVEN_RISK_MULTIPLE:.1f}R 后移动到保本，超过 {TREND_TRAILING_RISK_MULTIPLE:.1f}R 后用近{TREND_TRAILING_SWING_LOOKBACK}根执行周期结构和EMA20跟踪止损。",
-            f"区间单默认固定盈亏比约 {RANGE_TARGET_RISK_REWARD_RATIO:.1f}:1。",
+            f"区间单默认固定盈亏比约 {RANGE_TARGET_RISK_REWARD_RATIO:.1f}:1，且固定止盈空间必须足够覆盖手续费。",
             "止盈价基于最终止损距离重新计算，避免结构止损过远时出现低盈亏比单；趋势单止盈价只作为参考目标和盈亏比过滤依据。",
             "区间多的止盈会参考上方阻力；区间空的止盈会参考下方支撑。",
         ],
@@ -329,7 +333,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "回测结束仍未触发止盈止损的单会标记为期末平仓，但默认不纳入胜率、盈亏和资金曲线统计。",
         ],
         "indicator_analysis": [
-            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是先把交易拆成趋势单和震荡单：趋势单用1H主导、4H/日线过滤反向；震荡单必须贴近大级别边界，再用15m确认K线执行。",
+            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是先把交易拆成趋势单和震荡单：趋势单用1H主导、4H/日线过滤反向；震荡单必须贴近大级别边界，再用15m确认K线执行，并过滤手续费覆盖不足的小空间交易。",
             "EMA：20/50 用于执行和观察周期方向；50/100 用于日线趋势判定；144/169 作为 Vegas 通道中轴。",
             "Vegas：价格在 EMA144/EMA169 通道上方偏多，在下方偏空。",
             "DT：近 20 根 K 线高低点作为突破通道，上破偏多，下破偏空。",
@@ -337,7 +341,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "趋势线：使用最近 60 根观察周期 K 线和 EMA 排列判断方向。",
             "结构：近 45 根日线聚合 K 线检测双底/双顶。",
             "支撑阻力：近 30 根日线聚合 K 线低点为支撑，高点为阻力。",
-            f"量价关系：v7 不再把15m放量作为硬过滤；若信号K线成交量达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上则加分，不达标只是不加分。",
+            f"量价关系：v7.1 不再把15m放量作为硬过滤；若信号K线成交量达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上则加分，不达标只是不加分。",
             f"15m确认：趋势单允许回踩EMA或局部突破/跌破；震荡单必须贴近边界并出现反转确认；近16根涨跌超过 {MAX_15M_CHASE_MOVE_RATIO * 100:.0f}% 会过滤追涨追跌。",
             f"波动过滤：近20根15m平均振幅超过价格 {MAX_15M_AVERAGE_RANGE_RATIO * 100:.1f}% 的标的暂不交易，避免小币脏波动反复扫损。",
         ],
@@ -420,6 +424,7 @@ def backtest_asset(
     trend_rows = trend_candles or rows
     trend_filter_rows = trend_filters or {"4h": trend_rows}
     daily_rows = daily_candles or resample_candles(trend_rows, 86400)
+    next_allowed_entry_timestamp = 0
 
     execution_seconds = interval_seconds(execution_interval)
 
@@ -437,6 +442,7 @@ def backtest_asset(
             closed = maybe_close_trade(open_trade, high, low, close, signal_time, recent_rows)
             if closed:
                 trades.append(closed)
+                next_allowed_entry_timestamp = int(closed.get("closed_timestamp") or signal_time) + BACKTEST_SYMBOL_COOLDOWN_SECONDS
                 open_trade = None
             continue
 
@@ -502,21 +508,39 @@ def backtest_asset(
         take_profit = float(plan["take_profit"])
         if not is_valid_delayed_entry(str(plan["trade_signal"]), entry_price, stop_loss, take_profit):
             continue
+        if entry_time < next_allowed_entry_timestamp:
+            continue
         delayed_risk_reward_ratio = calculate_plan_risk_reward(entry_price, stop_loss, take_profit)
         required_delayed_risk_reward_ratio = TREND_MIN_RISK_REWARD_RATIO if is_trend_strategy_type(strategy_type) else RANGE_MIN_RISK_REWARD_RATIO
         if delayed_risk_reward_ratio < required_delayed_risk_reward_ratio:
+            continue
+        estimated_fee = round(notional * BACKTEST_FEE_RATE, 2)
+        planned_reward_usdt = calculate_planned_reward(str(plan["trade_signal"]), entry_price, take_profit, notional)
+        min_reward_fee_multiple = TREND_MIN_REWARD_FEE_MULTIPLE if is_trend_strategy_type(strategy_type) else RANGE_MIN_REWARD_FEE_MULTIPLE
+        if planned_reward_usdt < estimated_fee * min_reward_fee_multiple:
             continue
         entry_day = datetime.fromtimestamp(entry_time, tz=timezone.utc).date().isoformat()
         if daily_trade_counts.get(entry_day, 0) >= MAX_DAILY_TRADES_PER_ASSET:
             continue
 
         entry_reasons = list(plan.get("entry_reasons") or [])
-        entry_reasons.append("v7分流回测：趋势单用1H主导、4H/日线过滤反向；震荡单必须贴近大级别边界；15m确认K线收盘后确认，下一根15m K线开盘价成交")
+        entry_reasons.append(
+            "v7.1手续费感知回测：趋势单用1H主导、4H/日线过滤反向；震荡单必须贴近大级别边界；"
+            f"预期止盈金额约 {planned_reward_usdt:.2f}U，至少覆盖单笔手续费约 {estimated_fee:.2f}U 的 {min_reward_fee_multiple:.0f} 倍；"
+            "同一标的平仓后冷却4小时再允许下一单"
+        )
         indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
         indicator_snapshot["signal_price"] = round_price(close)
         indicator_snapshot["entry_price"] = round_price(entry_price)
         indicator_snapshot["risk_reward_ratio"] = delayed_risk_reward_ratio
-        indicator_snapshot["execution_detail"] = "信号K线收盘后确认，下一根15m K线开盘价成交；趋势单用1H主导、4H/日线过滤反向，震荡单必须贴近边界；日线只读取已完整收盘K线，15m不得过度追涨追跌。"
+        indicator_snapshot["estimated_fee_usdt"] = estimated_fee
+        indicator_snapshot["planned_reward_usdt"] = round(planned_reward_usdt, 2)
+        indicator_snapshot["min_reward_fee_multiple"] = min_reward_fee_multiple
+        indicator_snapshot["execution_detail"] = (
+            "信号K线收盘后确认，下一根15m K线开盘价成交；趋势单用1H主导、4H/日线过滤反向，"
+            "震荡单必须贴近边界；日线只读取已完整收盘K线；预期止盈空间必须显著覆盖手续费；"
+            "同一标的平仓后冷却4小时。"
+        )
 
         opening_logic = build_trade_opening_logic(
             asset.symbol,
@@ -656,6 +680,8 @@ def build_indicator_trade_plan(
     market_regime = str(market_context["regime"])
     long_context = market_context["near_support"] or market_context["near_fib_support"] or market_context["double_bottom"]
     short_context = market_context["near_resistance"] or market_context["near_fib_resistance"] or market_context["double_top"]
+    long_range_boundary = market_context["near_support"] or market_context["near_fib_support"] or (market_regime == "震荡区间" and market_context["double_bottom"])
+    short_range_boundary = market_context["near_resistance"] or market_context["near_fib_resistance"] or (market_regime == "震荡区间" and market_context["double_top"])
     dt_break_long = price >= float(market_context.get("dt_upper") or price * 10)
     dt_break_short = price <= float(market_context.get("dt_lower") or 0)
 
@@ -666,8 +692,8 @@ def build_indicator_trade_plan(
     if regime_split:
         long_trend_setup = one_hour_direction == "做多" and four_hour_direction != "做空" and market_regime != "下降趋势"
         short_trend_setup = one_hour_direction == "做空" and four_hour_direction != "做多" and market_regime != "上升趋势"
-        long_range_setup = long_context and one_hour_direction != "做空" and not short_trend_setup
-        short_range_setup = short_context and one_hour_direction != "做多" and not long_trend_setup
+        long_range_setup = long_range_boundary and one_hour_direction != "做空" and not short_trend_setup
+        short_range_setup = short_range_boundary and one_hour_direction != "做多" and not long_trend_setup
 
         if long_trend_setup:
             signal = "做多"
@@ -701,7 +727,7 @@ def build_indicator_trade_plan(
     if signal == "观望":
         return None
 
-    execution_confirmation = build_execution_confirmation(rows, index, signal, market_context, strategy_type)
+    execution_confirmation = build_execution_confirmation(rows, index, signal, market_context, strategy_type, regime_split)
     if execution_confirmation is None:
         return None
 
@@ -819,6 +845,7 @@ def build_execution_confirmation(
     signal: str,
     market_context: dict,
     strategy_type: str,
+    regime_split: bool = False,
 ) -> dict | None:
     if index < 55:
         return None
@@ -894,7 +921,8 @@ def build_execution_confirmation(
             reasons.append("趋势多：15m确认K线收阳，并重新站回EMA20、回踩EMA或突破近6根高点")
             reasons.append("趋势多：允许回踩后继续，也允许局部突破，但过滤近16根过度追涨")
         else:
-            if not (bullish_close and context_pullback and (reclaim_ema20 or lower_rejection or close > previous_close) and upper_wick_ok):
+            reversal_confirmed = (reclaim_ema20 or lower_rejection) if regime_split else (reclaim_ema20 or lower_rejection or close > previous_close)
+            if not (bullish_close and context_pullback and reversal_confirmed and upper_wick_ok):
                 return None
             reasons.append("区间多：价格靠近日线/Fib支撑或双底区域，15m出现收阳反转确认")
             reasons.append("区间多：只在区间下沿附近做，目标看中轴或上方阻力")
@@ -912,7 +940,8 @@ def build_execution_confirmation(
             reasons.append("趋势空：15m确认K线收阴，并跌回EMA20、反抽EMA或跌破近6根低点")
             reasons.append("趋势空：允许反抽后继续，也允许局部跌破，但过滤近16根过度追空")
         else:
-            if not (bearish_close and context_retest and (lose_ema20 or upper_rejection or close < previous_close) and lower_wick_ok):
+            reversal_confirmed = (lose_ema20 or upper_rejection) if regime_split else (lose_ema20 or upper_rejection or close < previous_close)
+            if not (bearish_close and context_retest and reversal_confirmed and lower_wick_ok):
                 return None
             reasons.append("区间空：价格靠近日线/Fib阻力或双顶区域，15m出现收阴反转确认")
             reasons.append("区间空：只在区间上沿附近做，目标看中轴或下方支撑")
@@ -1023,12 +1052,13 @@ def build_indicator_snapshot(
     if regime_split:
         trend_filter_detail = (
             f"1H方向={trend_directions.get('1h') or '无'}，4H方向={trend_directions.get('4h') or '无'}；"
-            "v7趋势单以1H为主且4H不能反向，震荡单允许1H观望但必须贴近边界。"
+            "v7.1趋势单以1H为主且4H不能反向，震荡单允许1H观望但必须贴近边界。"
         )
         risk_plan_detail = (
             f"止损={round_price(stop_loss)}，参考止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；"
             f"结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；"
-            "v7趋势单达到1R后保本、达到1.5R后移动止损，震荡单使用固定止盈止损。"
+            "v7.1趋势单达到1R后保本、达到1.5R后移动止损，震荡单使用固定止盈止损；"
+            f"预期止盈空间需覆盖单笔手续费至少 {TREND_MIN_REWARD_FEE_MULTIPLE:.0f} 倍，震荡单至少 {RANGE_MIN_REWARD_FEE_MULTIPLE:.0f} 倍。"
         )
     else:
         trend_filter_detail = (
@@ -1654,6 +1684,16 @@ def calculate_pnl(side: str, entry_price: float, exit_price: float, notional: fl
     else:
         value = (exit_price - entry_price) / entry_price * notional
     return round(value, 2)
+
+
+def calculate_planned_reward(side: str, entry_price: float, take_profit: float, notional: float) -> float:
+    if entry_price <= 0 or take_profit <= 0 or notional <= 0:
+        return 0
+    if side == "做空":
+        reward = (entry_price - take_profit) / entry_price * notional
+    else:
+        reward = (take_profit - entry_price) / entry_price * notional
+    return round(max(0, reward), 2)
 
 
 def calculate_trade_fee(trade: dict) -> float:

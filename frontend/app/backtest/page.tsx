@@ -46,7 +46,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           <p className="text-sm font-medium uppercase tracking-wide text-ink/50">策略回测</p>
           <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">近 {summary.days} 天指标策略回测</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/60">
-            v7 会把交易拆成趋势单和震荡单：趋势单用 1小时主导方向，4小时/日线过滤反向；震荡单必须贴近支撑阻力、Fib 或双顶双底边界，再用 15分钟确认K线执行开仓。回测只读取已入库K线，不会临时改动模拟持仓，默认排除期末强制平仓单。
+            v7.1 会把交易拆成趋势单和震荡单：趋势单用 1小时主导方向，4小时/日线过滤反向；震荡单必须贴近支撑阻力、Fib 或震荡里的双顶双底边界，再用 15分钟确认K线执行开仓。它会过滤预期止盈空间不足以覆盖手续费的小波动单，并在同一标的平仓后冷却 4 小时。
           </p>
           {summary.run_key ? (
             <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-xs text-ink/55">
@@ -62,8 +62,8 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           ) : null}
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
-            <span className="font-semibold text-ink">v7</span>
-            <span className="text-xs text-ink/45">2026-07-04v7-regime-split</span>
+            <span className="font-semibold text-ink">v7.1</span>
+            <span className="text-xs text-ink/45">2026-07-04v7.1-fee-aware</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
@@ -115,7 +115,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
                 回测范围 {summary.days} 天，使用 {formatInterval(summary.trend_interval)} 过滤方向、{formatInterval(summary.execution_interval)} 执行交易；测试现有 {summary.tested_assets} 个标的，其中 {summary.traded_assets} 个触发交易，共 {summary.total_trades} 笔闭环交易。
               </p>
               <p className="mt-2 text-xs leading-5 text-ink/55">
-                当前规则：指标质量分 &gt;= 80，大趋势允许该方向，并且执行周期与观察周期不冲突才开仓；旧综合评分只作为参考。
+                当前规则：指标质量分更严格，趋势单看 1H 主导方向，震荡单必须贴近边界；计划止盈空间必须明显覆盖手续费，旧综合评分只作为参考。
               </p>
               {summary.excluded_period_end_trades > 0 ? (
                 <p className="mt-2 text-xs leading-5 text-ink/55">
@@ -402,11 +402,11 @@ function normalizeInterval(value?: string): string {
 }
 
 function normalizeVersion(value?: string): string {
-  return "v7";
+  return "v7.1";
 }
 
 function isActiveVersionRun(run: BacktestRun): boolean {
-  return run.strategy_version === "v7" || run.strategy_version === "2026-07-04v7-regime-split";
+  return run.strategy_version === "v7.1" || run.strategy_version === "2026-07-04v7.1-fee-aware";
 }
 
 function formatInterval(value: string): string {
