@@ -27,10 +27,16 @@ from app.trade_logic import build_trade_plan, round_price
 BACKTEST_CACHE_TTL_SECONDS = 300
 BACKTEST_CACHE: dict[str, tuple[float, dict]] = {}
 TREND_LOOKBACK_CANDLES = 60
-BACKTEST_STRATEGY_VERSION = "2026-07-04v6.4-one-hour-primary"
-STRICT_MIN_QUALITY_SCORE = 82
+BACKTEST_STRATEGY_VERSION = "2026-07-04v7-regime-split"
+STRICT_MIN_QUALITY_SCORE = 78
+TREND_MIN_QUALITY_SCORE = 82
+RANGE_MIN_QUALITY_SCORE = 78
 BASE_INDICATOR_QUALITY = 62
-MIN_BACKTEST_RISK_REWARD_RATIO = 1.3
+MIN_BACKTEST_RISK_REWARD_RATIO = 1.2
+TREND_MIN_RISK_REWARD_RATIO = 1.1
+RANGE_MIN_RISK_REWARD_RATIO = 1.2
+LIVE_INDICATOR_MIN_QUALITY_SCORE = 82
+LIVE_INDICATOR_MIN_RISK_REWARD_RATIO = 1.3
 TREND_TARGET_RISK_REWARD_RATIO = 1.5
 RANGE_TARGET_RISK_REWARD_RATIO = 1.3
 TREND_BREAKEVEN_RISK_MULTIPLE = 1.0
@@ -286,30 +292,27 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "15m 信号在当前 K 线收盘后生成，下一根 15m K 线开盘价成交。",
         ],
         "entry_conditions": [
-            f"指标质量分必须 >= {min_quality_score}。",
-            f"计划盈亏比必须 >= {MIN_BACKTEST_RISK_REWARD_RATIO:.1f}:1。",
+            f"指标质量分：趋势单必须 >= {TREND_MIN_QUALITY_SCORE}，震荡单必须 >= {RANGE_MIN_QUALITY_SCORE}。",
+            f"计划盈亏比：趋势单参考 >= {TREND_MIN_RISK_REWARD_RATIO:.1f}:1，震荡单固定 >= {RANGE_MIN_RISK_REWARD_RATIO:.1f}:1。",
             f"市值成交活跃度过滤：24h 成交额 / 市值 >= {MIN_VOLUME_TO_CAP_RATIO * 100:.1f}%。",
-            "上升趋势只允许做多；下降趋势只允许做空；震荡区间允许靠近支撑做多、靠近阻力做空。",
-            "15m 执行时，1H 和 4H 必须同时与开仓方向一致。",
+            "趋势单：1H 决定主方向，4H 不能明显反向，日线不能是明确反向趋势。",
+            "震荡单：必须靠近日线/4H 支撑阻力、Fib 或双顶双底结构，不在区间中间开单。",
             f"单个标的每天最多开 {MAX_DAILY_TRADES_PER_ASSET} 单，避免 15m 反复被同一波动扫损。",
             "信号必须有可计算的止盈价和止损价，否则不允许开仓。",
         ],
         "long_logic": [
-            "日线/4H 判断为上升趋势，且 4H 指标方向为做多。",
-            "1H 和 4H 方向都必须为做多。",
-            "满足以下至少一类真实触发：靠近支撑、靠近斐波那契回撤支撑、出现双底结构、或突破 DT 上轨。",
-            "震荡区间中，只在靠近支撑或双底结构时做多。",
+            "趋势多：1H 做多，4H 不做空，日线不处于下降趋势；15m 回踩EMA后收阳，或突破近6根高点。",
+            "区间多：靠近日线/4H 支撑、Fib支撑或双底结构；1H 不能强空；15m 出现止跌收阳或下影反转。",
         ],
         "short_logic": [
-            "日线/4H 判断为下降趋势，且 4H 指标方向为做空。",
-            "1H 和 4H 方向都必须为做空。",
-            "满足以下至少一类真实触发：靠近阻力、靠近斐波那契反弹阻力、出现双顶结构、或跌破 DT 下轨。",
-            "震荡区间中，只在靠近阻力或双顶结构时做空。",
+            "趋势空：1H 做空，4H 不做多，日线不处于上升趋势；15m 反抽EMA后收阴，或跌破近6根低点。",
+            "区间空：靠近日线/4H 阻力、Fib阻力或双顶结构；1H 不能强多；15m 出现滞涨收阴或上影反转。",
         ],
         "stop_loss_logic": [
             "基础止损距离取最近 20 根执行周期 K 线平均波幅 * 1.6。",
             "最小止损距离不低于入场价的 1.2%。",
-            "做多止损优先放在支撑下方；做空止损优先放在阻力上方。",
+            "趋势单止损优先放在最近 12 根15m结构高低点外侧，结构太远则回退为波幅止损。",
+            "震荡单止损优先放在大级别支撑/阻力边界外侧。",
             f"只有支撑/阻力距离开仓价不超过 {MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}% 时，才允许作为结构止损；距离太远则回退为波幅止损。",
         ],
         "take_profit_logic": [
@@ -326,7 +329,7 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "回测结束仍未触发止盈止损的单会标记为期末平仓，但默认不纳入胜率、盈亏和资金曲线统计。",
         ],
         "indicator_analysis": [
-            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是用已收盘1H方向作为主方向，4H和日线只做背景加减分，最后必须出现15m确认K线，下一根15m开盘执行。",
+            f"策略名称：{BACKTEST_STRATEGY_VERSION}。核心思路是先把交易拆成趋势单和震荡单：趋势单用1H主导、4H/日线过滤反向；震荡单必须贴近大级别边界，再用15m确认K线执行。",
             "EMA：20/50 用于执行和观察周期方向；50/100 用于日线趋势判定；144/169 作为 Vegas 通道中轴。",
             "Vegas：价格在 EMA144/EMA169 通道上方偏多，在下方偏空。",
             "DT：近 20 根 K 线高低点作为突破通道，上破偏多，下破偏空。",
@@ -334,8 +337,8 @@ def build_backtest_rules(strategy_mode: str, execution_interval: str, trend_inte
             "趋势线：使用最近 60 根观察周期 K 线和 EMA 排列判断方向。",
             "结构：近 45 根日线聚合 K 线检测双底/双顶。",
             "支撑阻力：近 30 根日线聚合 K 线低点为支撑，高点为阻力。",
-            f"量价关系：v6.4 不再把15m放量作为硬过滤；若信号K线成交量达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上则加分，不达标只是不加分。",
-            f"15m确认：做多要求收阳、重新站回EMA20或突破近6根高点，并且不是近16根涨幅超过 {MAX_15M_CHASE_MOVE_RATIO * 100:.0f}% 的追涨；趋势突破可替代回踩条件，做空反向处理。",
+            f"量价关系：v7 不再把15m放量作为硬过滤；若信号K线成交量达到近20根均量的 {MIN_SIGNAL_VOLUME_MULTIPLE:.2f} 倍以上则加分，不达标只是不加分。",
+            f"15m确认：趋势单允许回踩EMA或局部突破/跌破；震荡单必须贴近边界并出现反转确认；近16根涨跌超过 {MAX_15M_CHASE_MOVE_RATIO * 100:.0f}% 会过滤追涨追跌。",
             f"波动过滤：近20根15m平均振幅超过价格 {MAX_15M_AVERAGE_RANGE_RATIO * 100:.1f}% 的标的暂不交易，避免小币脏波动反复扫损。",
         ],
         "risk_notes": [
@@ -465,7 +468,7 @@ def backtest_asset(
         market_context = build_daily_market_context(daily_rows, signal_time, close)
 
         if strategy_mode == "indicator":
-            plan = build_indicator_trade_plan(asset, rows, index, close, signal_time, trend_filter_rows, market_context)
+            plan = build_indicator_trade_plan(asset, rows, index, close, signal_time, trend_filter_rows, market_context, regime_split=True)
             if plan is None:
                 continue
             opportunity_score = int(plan["opportunity_score"])
@@ -500,19 +503,20 @@ def backtest_asset(
         if not is_valid_delayed_entry(str(plan["trade_signal"]), entry_price, stop_loss, take_profit):
             continue
         delayed_risk_reward_ratio = calculate_plan_risk_reward(entry_price, stop_loss, take_profit)
-        if delayed_risk_reward_ratio < MIN_BACKTEST_RISK_REWARD_RATIO:
+        required_delayed_risk_reward_ratio = TREND_MIN_RISK_REWARD_RATIO if is_trend_strategy_type(strategy_type) else RANGE_MIN_RISK_REWARD_RATIO
+        if delayed_risk_reward_ratio < required_delayed_risk_reward_ratio:
             continue
         entry_day = datetime.fromtimestamp(entry_time, tz=timezone.utc).date().isoformat()
         if daily_trade_counts.get(entry_day, 0) >= MAX_DAILY_TRADES_PER_ASSET:
             continue
 
         entry_reasons = list(plan.get("entry_reasons") or [])
-        entry_reasons.append("v6.4确认回测：1H作为主方向，4H/日线作为背景加减分，15m确认K线收盘后确认，下一根15m K线开盘价成交；趋势单用保本和移动止损退出")
+        entry_reasons.append("v7分流回测：趋势单用1H主导、4H/日线过滤反向；震荡单必须贴近大级别边界；15m确认K线收盘后确认，下一根15m K线开盘价成交")
         indicator_snapshot = dict(plan.get("indicator_snapshot") or {})
         indicator_snapshot["signal_price"] = round_price(close)
         indicator_snapshot["entry_price"] = round_price(entry_price)
         indicator_snapshot["risk_reward_ratio"] = delayed_risk_reward_ratio
-        indicator_snapshot["execution_detail"] = "信号K线收盘后确认，下一根15m K线开盘价成交；1H作为主方向，4H/日线只做背景加减分，日线只读取已完整收盘K线，15m不得过度追涨追跌。"
+        indicator_snapshot["execution_detail"] = "信号K线收盘后确认，下一根15m K线开盘价成交；趋势单用1H主导、4H/日线过滤反向，震荡单必须贴近边界；日线只读取已完整收盘K线，15m不得过度追涨追跌。"
 
         opening_logic = build_trade_opening_logic(
             asset.symbol,
@@ -634,6 +638,7 @@ def build_indicator_trade_plan(
     timestamp: int,
     trend_filter_rows: dict[str, list[dict[str, float | int]]],
     market_context: dict,
+    regime_split: bool = False,
 ) -> dict | None:
     if market_context["regime"] == "数据不足" or price <= 0:
         return None
@@ -658,26 +663,45 @@ def build_indicator_trade_plan(
     strategy_type = "不匹配"
     quality = BASE_INDICATOR_QUALITY
 
-    if market_regime == "上升趋势":
-        if one_hour_direction == "做多":
+    if regime_split:
+        long_trend_setup = one_hour_direction == "做多" and four_hour_direction != "做空" and market_regime != "下降趋势"
+        short_trend_setup = one_hour_direction == "做空" and four_hour_direction != "做多" and market_regime != "上升趋势"
+        long_range_setup = long_context and one_hour_direction != "做空" and not short_trend_setup
+        short_range_setup = short_context and one_hour_direction != "做多" and not long_trend_setup
+
+        if long_trend_setup:
             signal = "做多"
-            strategy_type = "上升趋势区间多" if long_context else "趋势多"
-    elif market_regime == "下降趋势":
-        if one_hour_direction == "做空":
+            strategy_type = "趋势多"
+        elif short_trend_setup:
             signal = "做空"
-            strategy_type = "下降趋势区间空" if short_context else "趋势空"
-    else:
-        if long_context and one_hour_direction == "做多":
+            strategy_type = "趋势空"
+        elif long_range_setup:
             signal = "做多"
             strategy_type = "区间多"
-        elif short_context and one_hour_direction == "做空":
+        elif short_range_setup:
             signal = "做空"
             strategy_type = "区间空"
+    else:
+        if market_regime == "上升趋势":
+            if one_hour_direction == "做多":
+                signal = "做多"
+                strategy_type = "上升趋势区间多" if long_context else "趋势多"
+        elif market_regime == "下降趋势":
+            if one_hour_direction == "做空":
+                signal = "做空"
+                strategy_type = "下降趋势区间空" if short_context else "趋势空"
+        else:
+            if long_context and one_hour_direction == "做多":
+                signal = "做多"
+                strategy_type = "区间多"
+            elif short_context and one_hour_direction == "做空":
+                signal = "做空"
+                strategy_type = "区间空"
 
     if signal == "观望":
         return None
 
-    execution_confirmation = build_execution_confirmation(rows, index, signal, market_context)
+    execution_confirmation = build_execution_confirmation(rows, index, signal, market_context, strategy_type)
     if execution_confirmation is None:
         return None
 
@@ -686,29 +710,55 @@ def build_indicator_trade_plan(
     aligned_sr = (signal == "做多" and market_context["near_support"]) or (signal == "做空" and market_context["near_resistance"])
     aligned_market = (signal == "做多" and market_regime == "上升趋势") or (signal == "做空" and market_regime == "下降趋势")
 
-    quality += 16 if one_hour_direction == signal else 0
-    if four_hour_direction == signal:
-        quality += 8
-    elif four_hour_direction == "观望":
-        quality += 2
+    if regime_split and is_trend_strategy_type(strategy_type):
+        quality += 16 if one_hour_direction == signal else 0
+        if four_hour_direction == signal:
+            quality += 8
+        elif four_hour_direction == "观望":
+            quality += 2
+        else:
+            quality -= 12
+        quality += 8 if aligned_market else 0
+        quality += 3 if (signal == "做多" and dt_break_long) or (signal == "做空" and dt_break_short) else 0
+    elif regime_split:
+        quality += 8 if one_hour_direction in {signal, "观望"} else -10
+        quality += 4 if four_hour_direction in {signal, "观望"} else -8
+        quality += 6 if market_regime == "震荡区间" else 0
+        quality += 8 if aligned_sr else 0
+        quality += 6 if aligned_fib else 0
+        quality += 6 if aligned_structure else 0
     else:
-        quality -= 8
-    quality += 6 if aligned_market else 0
-    quality += 3 if strategy_type in {"区间多", "区间空"} else 0
-    quality += 5 if aligned_sr else 0
-    quality += 4 if aligned_fib else 0
-    quality += 4 if aligned_structure else 0
+        quality += 16 if one_hour_direction == signal else 0
+        if four_hour_direction == signal:
+            quality += 8
+        elif four_hour_direction == "观望":
+            quality += 2
+        else:
+            quality -= 8
+        quality += 6 if aligned_market else 0
+        quality += 3 if strategy_type in {"区间多", "区间空"} else 0
+        quality += 5 if aligned_sr else 0
+        quality += 4 if aligned_fib else 0
+        quality += 4 if aligned_structure else 0
     quality += int(execution_confirmation.get("quality_bonus") or 0)
     quality = max(0, min(100, quality))
 
-    if quality < STRICT_MIN_QUALITY_SCORE:
+    required_quality = (
+        (TREND_MIN_QUALITY_SCORE if is_trend_strategy_type(strategy_type) else RANGE_MIN_QUALITY_SCORE)
+        if regime_split else LIVE_INDICATOR_MIN_QUALITY_SCORE
+    )
+    if quality < required_quality:
         return None
 
     stop_loss, take_profit = build_indicator_exit_prices(signal, price, rows, index, market_context, strategy_type)
     if not stop_loss or not take_profit:
         return None
     risk_reward_ratio = calculate_plan_risk_reward(price, stop_loss, take_profit)
-    if risk_reward_ratio < MIN_BACKTEST_RISK_REWARD_RATIO:
+    required_risk_reward_ratio = (
+        (TREND_MIN_RISK_REWARD_RATIO if is_trend_strategy_type(strategy_type) else RANGE_MIN_RISK_REWARD_RATIO)
+        if regime_split else LIVE_INDICATOR_MIN_RISK_REWARD_RATIO
+    )
+    if risk_reward_ratio < required_risk_reward_ratio:
         return None
     entry_reasons = build_entry_reasons(
         signal,
@@ -722,7 +772,7 @@ def build_indicator_trade_plan(
         volume_to_cap,
     )
     entry_reasons.extend(str(reason) for reason in execution_confirmation.get("reasons", []))
-    entry_reasons.append(f"计划盈亏比为{risk_reward_ratio:.2f}:1，达到最低 {MIN_BACKTEST_RISK_REWARD_RATIO:.1f}:1 开仓要求")
+    entry_reasons.append(f"计划盈亏比为{risk_reward_ratio:.2f}:1，达到{strategy_type}最低 {required_risk_reward_ratio:.1f}:1 开仓要求")
     indicator_snapshot = build_indicator_snapshot(
         price,
         trend_directions,
@@ -735,6 +785,7 @@ def build_indicator_trade_plan(
         take_profit,
         entry_reasons,
         execution_confirmation,
+        regime_split,
     )
 
     return {
@@ -767,6 +818,7 @@ def build_execution_confirmation(
     index: int,
     signal: str,
     market_context: dict,
+    strategy_type: str,
 ) -> dict | None:
     if index < 55:
         return None
@@ -813,6 +865,8 @@ def build_execution_confirmation(
     prior_low = min(float(row["low"]) for row in rows[max(0, index - 6): index])
     body = abs(close - open_price)
     candle_range = max(high - low, close * 0.0001)
+    upper_wick = high - max(open_price, close)
+    lower_wick = min(open_price, close) - low
 
     volume_rows = [
         float(row.get("volume") or 0)
@@ -825,6 +879,7 @@ def build_execution_confirmation(
     volume_multiple = signal_volume / average_volume if average_volume > 0 else 0
     reasons: list[str] = []
     quality_bonus = 5
+    trend_mode = is_trend_strategy_type(strategy_type)
     if signal == "做多":
         bullish_close = close > open_price and close >= low + candle_range * 0.55
         reclaim_ema20 = previous_ema20 is not None and previous_close <= previous_ema20 and close > ema20
@@ -832,10 +887,17 @@ def build_execution_confirmation(
         ema_pullback = low <= ema20 * 1.006 or (ema50 is not None and low <= ema50 * 1.008)
         context_pullback = market_context.get("near_support") or market_context.get("near_fib_support") or market_context.get("double_bottom")
         upper_wick_ok = (high - close) <= max(body, average_range * 0.35) * 1.6
-        if not (bullish_close and (reclaim_ema20 or local_breakout) and (ema_pullback or context_pullback or local_breakout) and upper_wick_ok):
-            return None
-        reasons.append("15m确认K线收阳，并重新站回EMA20或突破近6根高点")
-        reasons.append("15m回踩EMA、靠近日线支撑/Fib结构或出现局部突破后触发，避免过度追涨")
+        lower_rejection = lower_wick >= max(body * 0.45, average_range * 0.12)
+        if trend_mode:
+            if not (bullish_close and (reclaim_ema20 or local_breakout or ema_pullback) and (ema_pullback or local_breakout) and upper_wick_ok):
+                return None
+            reasons.append("趋势多：15m确认K线收阳，并重新站回EMA20、回踩EMA或突破近6根高点")
+            reasons.append("趋势多：允许回踩后继续，也允许局部突破，但过滤近16根过度追涨")
+        else:
+            if not (bullish_close and context_pullback and (reclaim_ema20 or lower_rejection or close > previous_close) and upper_wick_ok):
+                return None
+            reasons.append("区间多：价格靠近日线/Fib支撑或双底区域，15m出现收阳反转确认")
+            reasons.append("区间多：只在区间下沿附近做，目标看中轴或上方阻力")
     elif signal == "做空":
         bearish_close = close < open_price and close <= high - candle_range * 0.55
         lose_ema20 = previous_ema20 is not None and previous_close >= previous_ema20 and close < ema20
@@ -843,10 +905,17 @@ def build_execution_confirmation(
         ema_retest = high >= ema20 * 0.994 or (ema50 is not None and high >= ema50 * 0.992)
         context_retest = market_context.get("near_resistance") or market_context.get("near_fib_resistance") or market_context.get("double_top")
         lower_wick_ok = (close - low) <= max(body, average_range * 0.35) * 1.6
-        if not (bearish_close and (lose_ema20 or local_breakdown) and (ema_retest or context_retest or local_breakdown) and lower_wick_ok):
-            return None
-        reasons.append("15m确认K线收阴，并跌回EMA20下方或跌破近6根低点")
-        reasons.append("15m反抽EMA、靠近日线阻力/Fib结构或出现局部跌破后触发，避免过度追空")
+        upper_rejection = upper_wick >= max(body * 0.45, average_range * 0.12)
+        if trend_mode:
+            if not (bearish_close and (lose_ema20 or local_breakdown or ema_retest) and (ema_retest or local_breakdown) and lower_wick_ok):
+                return None
+            reasons.append("趋势空：15m确认K线收阴，并跌回EMA20、反抽EMA或跌破近6根低点")
+            reasons.append("趋势空：允许反抽后继续，也允许局部跌破，但过滤近16根过度追空")
+        else:
+            if not (bearish_close and context_retest and (lose_ema20 or upper_rejection or close < previous_close) and lower_wick_ok):
+                return None
+            reasons.append("区间空：价格靠近日线/Fib阻力或双顶区域，15m出现收阴反转确认")
+            reasons.append("区间空：只在区间上沿附近做，目标看中轴或下方支撑")
     else:
         return None
 
@@ -928,6 +997,7 @@ def build_indicator_snapshot(
     take_profit: float,
     entry_reasons: list[str],
     execution_confirmation: dict | None = None,
+    regime_split: bool = False,
 ) -> dict:
     risk = abs(price - stop_loss)
     reward = abs(take_profit - price)
@@ -950,6 +1020,26 @@ def build_indicator_snapshot(
     recent_move_ratio = float(confirmation.get("recent_move_ratio") or 0)
     execution_ema20 = round_optional_price(confirmation.get("ema20"))
     execution_ema50 = round_optional_price(confirmation.get("ema50"))
+    if regime_split:
+        trend_filter_detail = (
+            f"1H方向={trend_directions.get('1h') or '无'}，4H方向={trend_directions.get('4h') or '无'}；"
+            "v7趋势单以1H为主且4H不能反向，震荡单允许1H观望但必须贴近边界。"
+        )
+        risk_plan_detail = (
+            f"止损={round_price(stop_loss)}，参考止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；"
+            f"结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；"
+            "v7趋势单达到1R后保本、达到1.5R后移动止损，震荡单使用固定止盈止损。"
+        )
+    else:
+        trend_filter_detail = (
+            f"1H方向={trend_directions.get('1h') or '无'}，4H方向={trend_directions.get('4h') or '无'}；"
+            "v6.4以1H为主方向，4H同向加分、观望小加分、反向扣分。"
+        )
+        risk_plan_detail = (
+            f"止损={round_price(stop_loss)}，参考止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；"
+            f"结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；"
+            "v6.4确认口径会在信号K线收盘后，以下一根15m开盘价成交，趋势单达到1R后保本、达到1.5R后移动止损。"
+        )
     return {
         "price": round_price(price),
         "one_hour_direction": trend_directions.get("1h"),
@@ -981,7 +1071,7 @@ def build_indicator_snapshot(
         "execution_ema50": execution_ema50,
         "risk_reward_ratio": round(rr, 2),
         "signal_detail": f"开仓方向={signal}，策略类型={strategy_type}，指标质量分={quality}/100。",
-        "trend_filter_detail": f"1H方向={trend_directions.get('1h') or '无'}，4H方向={trend_directions.get('4h') or '无'}；v6.4以1H为主方向，4H同向加分、观望小加分、反向扣分。",
+        "trend_filter_detail": trend_filter_detail,
         "daily_ema_detail": f"日线结构={market_context.get('regime')}；EMA50={format_optional_level(ema50)}，EMA100={format_optional_level(ema100)}，EMA200={format_optional_level(ema200)}。",
         "vegas_detail": f"Vegas EMA144={format_optional_level(ema144)}，EMA169={format_optional_level(ema169)}；价格在通道上方偏多、下方偏空。",
         "dt_detail": f"DT上轨={format_optional_level(dt_upper)}，DT下轨={format_optional_level(dt_lower)}；上破偏多，下破偏空。",
@@ -994,7 +1084,7 @@ def build_indicator_snapshot(
             f"信号K成交量/近20根均量={signal_volume_multiple:.2f}倍，达到>={MIN_SIGNAL_VOLUME_MULTIPLE:.2f}倍才加分。"
         ),
         "execution_confirmation_detail": f"15m EMA20={format_optional_level(execution_ema20)}，EMA50={format_optional_level(execution_ema50)}；近16根涨跌={recent_move_ratio * 100:.2f}%，近20根平均振幅={average_range_ratio * 100:.2f}%。",
-        "risk_plan_detail": f"止损={round_price(stop_loss)}，参考止盈={round_price(take_profit)}，计划盈亏比约{rr:.2f}:1；结构止损距离上限为开仓价的{MAX_STRUCTURE_STOP_DISTANCE_RATIO * 100:.0f}%，超出则使用波幅止损；v6.4确认口径会在信号K线收盘后，以下一根15m开盘价成交，趋势单达到1R后保本、达到1.5R后移动止损。",
+        "risk_plan_detail": risk_plan_detail,
         "entry_reason_detail": "；".join(entry_reasons),
     }
 
@@ -1076,13 +1166,19 @@ def build_indicator_exit_prices(
 
     average_range = sum(float(row["high"]) - float(row["low"]) for row in recent) / len(recent)
     stop_distance = max(average_range * 1.6, price * 0.012)
-    reward_multiple = TREND_TARGET_RISK_REWARD_RATIO if strategy_type in {"趋势多", "趋势空"} else RANGE_TARGET_RISK_REWARD_RATIO
+    trend_mode = is_trend_strategy_type(strategy_type)
+    reward_multiple = TREND_TARGET_RISK_REWARD_RATIO if trend_mode else RANGE_TARGET_RISK_REWARD_RATIO
 
     support = market_context.get("support")
     resistance = market_context.get("resistance")
     if signal == "做多":
         raw_stop = price - stop_distance
-        if support and float(support) < price:
+        swing_low = min(float(row["low"]) for row in recent[-12:])
+        if trend_mode and swing_low < price:
+            swing_stop = swing_low * 0.998
+            if (price - swing_stop) / price <= MAX_STRUCTURE_STOP_DISTANCE_RATIO:
+                raw_stop = min(raw_stop, swing_stop)
+        elif support and float(support) < price:
             support_stop = float(support) * 0.995
             if (price - support_stop) / price <= MAX_STRUCTURE_STOP_DISTANCE_RATIO:
                 raw_stop = min(raw_stop, support_stop)
@@ -1093,7 +1189,12 @@ def build_indicator_exit_prices(
         return round_price(raw_stop), round_price(raw_take_profit)
 
     raw_stop = price + stop_distance
-    if resistance and float(resistance) > price:
+    swing_high = max(float(row["high"]) for row in recent[-12:])
+    if trend_mode and swing_high > price:
+        swing_stop = swing_high * 1.002
+        if (swing_stop - price) / price <= MAX_STRUCTURE_STOP_DISTANCE_RATIO:
+            raw_stop = max(raw_stop, swing_stop)
+    elif resistance and float(resistance) > price:
         resistance_stop = float(resistance) * 1.005
         if (resistance_stop - price) / price <= MAX_STRUCTURE_STOP_DISTANCE_RATIO:
             raw_stop = max(raw_stop, resistance_stop)

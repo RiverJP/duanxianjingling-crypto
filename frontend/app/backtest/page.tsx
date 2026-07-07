@@ -46,7 +46,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           <p className="text-sm font-medium uppercase tracking-wide text-ink/50">策略回测</p>
           <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">近 {summary.days} 天指标策略回测</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/60">
-            用 1小时方向判断主方向，4小时和日线 Vegas、EMA、DT、斐波那契、结构和支撑阻力作为背景加减分，再用 15分钟确认K线执行开仓；15分钟执行时不把放量作为硬过滤，但会过滤过度追涨追跌。回测只读取已入库K线，不会临时改动模拟持仓，默认排除期末强制平仓单。
+            v7 会把交易拆成趋势单和震荡单：趋势单用 1小时主导方向，4小时/日线过滤反向；震荡单必须贴近支撑阻力、Fib 或双顶双底边界，再用 15分钟确认K线执行开仓。回测只读取已入库K线，不会临时改动模拟持仓，默认排除期末强制平仓单。
           </p>
           {summary.run_key ? (
             <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-xs text-ink/55">
@@ -62,8 +62,8 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           ) : null}
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
-            <span className="font-semibold text-ink">v6</span>
-            <span className="text-xs text-ink/45">2026-07-04v6.4-one-hour-primary</span>
+            <span className="font-semibold text-ink">v7</span>
+            <span className="text-xs text-ink/45">2026-07-04v7-regime-split</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
@@ -402,11 +402,11 @@ function normalizeInterval(value?: string): string {
 }
 
 function normalizeVersion(value?: string): string {
-  return "v6";
+  return "v7";
 }
 
 function isActiveVersionRun(run: BacktestRun): boolean {
-  return run.strategy_version === "v6" || run.strategy_version === "2026-07-04v6.4-one-hour-primary";
+  return run.strategy_version === "v7" || run.strategy_version === "2026-07-04v7-regime-split";
 }
 
 function formatInterval(value: string): string {
