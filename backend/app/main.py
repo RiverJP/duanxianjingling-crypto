@@ -46,6 +46,7 @@ BACKTEST_VERSION_ALIASES = {
     "v7": "2026-07-04v7-regime-split",
     "v7.1": "2026-07-04v7.1-fee-aware",
     "v7.2": "2026-07-04v7.2-range-reward-250",
+    "v7.3": "2026-07-04v7.3-frequency-filter",
 }
 
 app.add_middleware(

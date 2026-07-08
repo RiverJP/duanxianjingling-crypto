@@ -46,7 +46,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           <p className="text-sm font-medium uppercase tracking-wide text-ink/50">策略回测</p>
           <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">近 {summary.days} 天指标策略回测</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-ink/60">
-            v7.2 基于 v7 的趋势/震荡分流：趋势单仍用 1小时主导方向，4小时/日线过滤反向；震荡单必须贴近支撑阻力、Fib 或双顶双底边界，再用 15分钟确认K线执行开仓，并且计划止盈金额至少 250U。
+            v7.3 基于 v7.2 继续降频：趋势空暂停，趋势多计划止盈金额至少 150U；震荡单必须贴近支撑阻力、Fib 或双顶双底边界，再用 15分钟确认K线执行开仓，并且计划止盈金额至少 250U。
           </p>
           {summary.run_key ? (
             <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-xs text-ink/55">
@@ -62,8 +62,8 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
           ) : null}
           <div className="mt-4 inline-flex flex-wrap items-center gap-2 rounded border border-ink/10 bg-white px-3 py-2 text-sm text-ink/60">
             <span>当前只展示</span>
-            <span className="font-semibold text-ink">v7.2</span>
-            <span className="text-xs text-ink/45">2026-07-04v7.2-range-reward-250</span>
+            <span className="font-semibold text-ink">v7.3</span>
+            <span className="text-xs text-ink/45">2026-07-04v7.3-frequency-filter</span>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
             {PERIODS.map((period) => (
@@ -115,7 +115,7 @@ export default async function BacktestPage({ searchParams }: { searchParams?: Pr
                 回测范围 {summary.days} 天，使用 {formatInterval(summary.trend_interval)} 过滤方向、{formatInterval(summary.execution_interval)} 执行交易；测试现有 {summary.tested_assets} 个标的，其中 {summary.traded_assets} 个触发交易，共 {summary.total_trades} 笔闭环交易。
               </p>
               <p className="mt-2 text-xs leading-5 text-ink/55">
-                当前规则：沿用 v7 质量分和趋势/震荡分流，额外要求震荡单计划止盈金额至少 250U；旧综合评分只作为参考。
+                当前规则：沿用 v7.2 趋势/震荡分流，并暂停趋势空、趋势多要求至少 150U 计划止盈、震荡单至少 250U；旧综合评分只作为参考。
               </p>
               {summary.excluded_period_end_trades > 0 ? (
                 <p className="mt-2 text-xs leading-5 text-ink/55">
@@ -402,11 +402,11 @@ function normalizeInterval(value?: string): string {
 }
 
 function normalizeVersion(value?: string): string {
-  return "v7.2";
+  return "v7.3";
 }
 
 function isActiveVersionRun(run: BacktestRun): boolean {
-  return run.strategy_version === "v7.2" || run.strategy_version === "2026-07-04v7.2-range-reward-250";
+  return run.strategy_version === "v7.3" || run.strategy_version === "2026-07-04v7.3-frequency-filter";
 }
 
 function formatInterval(value: string): string {
